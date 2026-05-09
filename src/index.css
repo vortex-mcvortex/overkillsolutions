@@ -699,11 +699,11 @@ textarea {
 }
 .record-button-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 10px;
 }
 
-@media (max-width: 600px) {
+@media (max-width: 800px) {
   .record-button-row {
     grid-template-columns: 1fr;
   }

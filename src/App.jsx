@@ -32,15 +32,6 @@ function money(value) {
   });
 }
 
-function PlaceholderPage({ title, description }) {
-  return (
-    <section className="page-panel">
-      <h2 className="section-title brand-font">{title}</h2>
-      <p className="muted-text">{description}</p>
-    </section>
-  );
-}
-
 function getInitialState(key, fallback) {
   try {
     const saved = localStorage.getItem(key);
@@ -48,6 +39,15 @@ function getInitialState(key, fallback) {
   } catch {
     return fallback;
   }
+}
+
+function PlaceholderPage({ title, description }) {
+  return (
+    <section className="page-panel">
+      <h2 className="section-title brand-font">{title}</h2>
+      <p className="muted-text">{description}</p>
+    </section>
+  );
 }
 
 export default function App() {
@@ -58,6 +58,9 @@ export default function App() {
     getInitialState("overkill_used_record_numbers", [])
   );
   const [selectedPaymentJobId, setSelectedPaymentJobId] = useState("");
+  const [editingQuoteId, setEditingQuoteId] = useState(null);
+
+  const editingQuote = quotes.find((quote) => quote.id === editingQuoteId) || null;
 
   function saveToStorage(nextQuotes, nextJobs, nextUsedNumbers) {
     localStorage.setItem("overkill_quotes", JSON.stringify(nextQuotes));
@@ -76,7 +79,25 @@ export default function App() {
     return highest + 1;
   }
 
-  function saveQuote(quoteData) {
+  function saveQuote(quoteData, editingId = null) {
+    if (editingId) {
+      const nextQuotes = quotes.map((quote) => {
+        if (quote.id !== editingId) return quote;
+
+        return {
+          ...quote,
+          ...quoteData,
+          updatedAt: new Date().toISOString(),
+        };
+      });
+
+      setQuotes(nextQuotes);
+      saveToStorage(nextQuotes, jobs, usedRecordNumbers);
+      setEditingQuoteId(null);
+      setActivePage("quotes");
+      return;
+    }
+
     const recordNumber = generateNextRecordNumber();
 
     const newQuote = {
@@ -97,6 +118,17 @@ export default function App() {
     setQuotes(nextQuotes);
     setUsedRecordNumbers(nextUsedNumbers);
     saveToStorage(nextQuotes, jobs, nextUsedNumbers);
+    setEditingQuoteId(null);
+    setActivePage("quotes");
+  }
+
+  function startEditQuote(quoteId) {
+    setEditingQuoteId(quoteId);
+    setActivePage("calculator");
+  }
+
+  function cancelEditQuote() {
+    setEditingQuoteId(null);
     setActivePage("quotes");
   }
 
@@ -130,6 +162,7 @@ export default function App() {
 
     setQuotes(nextQuotes);
     setJobs(nextJobs);
+    setEditingQuoteId(null);
     setSelectedPaymentJobId(newJob.id);
     saveToStorage(nextQuotes, nextJobs, usedRecordNumbers);
     setActivePage("jobs");
@@ -156,7 +189,7 @@ export default function App() {
       0
     );
 
-    const totalJobs = jobs.reduce(
+    const totalJobsValue = jobs.reduce(
       (sum, job) => sum + Number(job.finalTotal || 0),
       0
     );
@@ -165,7 +198,7 @@ export default function App() {
       totalQuotes: quotes.length,
       totalJobs: jobs.length,
       totalQuoted,
-      totalJobsValue: totalJobs,
+      totalJobsValue,
     };
   }, [quotes, jobs]);
 
@@ -180,10 +213,17 @@ export default function App() {
         )}. Active job value: ${money(dashboardStats.totalJobsValue)}.`}
       />
     ),
-    calculator: <CalculatorPage onSaveQuote={saveQuote} />,
+    calculator: (
+      <CalculatorPage
+        onSaveQuote={saveQuote}
+        editingQuote={editingQuote}
+        onCancelEdit={cancelEditQuote}
+      />
+    ),
     quotes: (
       <QuotesPage
         quotes={quotes}
+        onEditQuote={startEditQuote}
         onConvertToJob={convertQuoteToJob}
       />
     ),
@@ -225,7 +265,10 @@ export default function App() {
               <button
                 key={item.id}
                 className={`nav-button ${isActive ? "active" : ""}`}
-                onClick={() => setActivePage(item.id)}
+                onClick={() => {
+                  if (item.id !== "calculator") setEditingQuoteId(null);
+                  setActivePage(item.id);
+                }}
               >
                 <Icon size={18} />
                 <span>{item.label}</span>

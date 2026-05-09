@@ -1,4 +1,4 @@
-import { FileDown } from "lucide-react";
+import { FileDown, Pencil } from "lucide-react";
 import { exportQuotePdf } from "../utils/pdf";
 
 function money(value) {
@@ -8,14 +8,14 @@ function money(value) {
   });
 }
 
-export default function QuotesPage({ quotes, onConvertToJob }) {
+export default function QuotesPage({ quotes, onEditQuote, onConvertToJob }) {
   return (
     <section className="page-panel">
       <div className="page-heading-row">
         <div>
           <h2 className="section-title brand-font">Quotes</h2>
           <p className="muted-text">
-            Saved quote history and pricing records. Convert approved quotes into jobs when the client says go.
+            Saved quote history and pricing records. Edit quotes before approval, or convert approved quotes into jobs when the client says go.
           </p>
         </div>
       </div>
@@ -73,6 +73,16 @@ export default function QuotesPage({ quotes, onConvertToJob }) {
               <div className="record-button-row">
                 <button
                   className="secondary-button"
+                  type="button"
+                  onClick={() => onEditQuote(quote.id)}
+                >
+                  <Pencil size={18} />
+                  Edit Quote
+                </button>
+
+                <button
+                  className="secondary-button"
+                  type="button"
                   onClick={() => exportQuotePdf(quote)}
                 >
                   <FileDown size={18} />
@@ -81,6 +91,7 @@ export default function QuotesPage({ quotes, onConvertToJob }) {
 
                 <button
                   className="primary-button record-action"
+                  type="button"
                   onClick={() => onConvertToJob(quote.id)}
                 >
                   Convert to Job

@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { Save, RotateCcw, Plus, Trash2, Wand2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Save, RotateCcw, Plus, Trash2, Wand2, XCircle } from "lucide-react";
 
 const PRINTERS = [
   { id: "p1s", label: "Bambu P1S" },
@@ -234,16 +234,12 @@ function calculatePrintSetup(printRuns) {
       primarySetup: 0,
       additionalSetup: 0,
       totalSetup: 0,
-      primaryTierLabel: "No print setup",
       explanation: "No 3D print runs selected.",
     };
   }
 
   const rankedRuns = printRuns
-    .map((run) => {
-      const tier = getPrintRunSetupTier(run);
-      return { run, tier };
-    })
+    .map((run) => ({ run, tier: getPrintRunSetupTier(run) }))
     .sort((a, b) => b.tier.rank - a.tier.rank);
 
   const primary = rankedRuns[0];
@@ -272,7 +268,6 @@ function calculatePrintSetup(printRuns) {
     primarySetup,
     additionalSetup,
     totalSetup: roundUpMoney(primarySetup + additionalSetup),
-    primaryTierLabel: primary.tier.label,
     explanation:
       rankedRuns.length === 1
         ? `${primary.tier.label} applied from the selected print run.`
@@ -286,7 +281,6 @@ function activeProcessCount(jobAspects) {
 
 function serviceStackDiscount(jobAspects) {
   const count = activeProcessCount(jobAspects);
-
   if (count >= 4) return 0.7;
   if (count === 3) return 0.8;
   if (count === 2) return 0.9;
@@ -316,7 +310,6 @@ function suggestVinylService(form) {
 
 function suggestIntegrationComplexity(jobAspects) {
   const count = activeProcessCount(jobAspects);
-
   if (count >= 4) return "advanced";
   if (count === 3) return "moderate";
   if (count === 2) return "simple";
@@ -328,8 +321,24 @@ function suggestIntegrationFee(form) {
   const count = activeProcessCount(form.jobAspects);
 
   if (count <= 1 || form.integrationComplexity === "none") return 0;
-
   return roundUpMoney(complexity.integration);
+}
+
+function buildInitialForm(quote = null) {
+  const sourceForm = quote?.formData || {};
+
+  return {
+    ...DEFAULT_FORM,
+    ...sourceForm,
+    printRuns:
+      sourceForm.printRuns?.length > 0
+        ? sourceForm.printRuns
+        : [createPrintRun()],
+    vinylMaterialLines:
+      sourceForm.vinylMaterialLines?.length > 0
+        ? sourceForm.vinylMaterialLines
+        : [createVinylLine()],
+  };
 }
 
 function Field({
@@ -356,12 +365,12 @@ function Field({
   );
 }
 
-export default function CalculatorPage({ onSaveQuote }) {
-  const [form, setForm] = useState({
-    ...DEFAULT_FORM,
-    printRuns: [createPrintRun()],
-    vinylMaterialLines: [createVinylLine()],
-  });
+export default function CalculatorPage({ onSaveQuote, editingQuote, onCancelEdit }) {
+  const [form, setForm] = useState(() => buildInitialForm(editingQuote));
+
+  useEffect(() => {
+    setForm(buildInitialForm(editingQuote));
+  }, [editingQuote]);
 
   const selectedCadPreset =
     CAD_PRESETS.find((item) => item.id === form.cadPresetId) || CAD_PRESETS[0];
@@ -427,7 +436,8 @@ export default function CalculatorPage({ onSaveQuote }) {
     const cadCost = form.jobAspects.cad ? num(selectedCadPreset.amount) : 0;
     const engravingCost = form.jobAspects.engraving ? num(form.engravingFee) : 0;
     const vinylCost = form.jobAspects.vinyl ? num(form.vinylFee) : 0;
-    const integrationCost = activeProcessCount(form.jobAspects) > 1 ? num(form.integrationFee) : 0;
+    const integrationCost =
+      activeProcessCount(form.jobAspects) > 1 ? num(form.integrationFee) : 0;
     const customCost = form.jobAspects.custom ? num(form.customFee) : 0;
     const extraLaborCost = roundUpMoney(
       num(form.extraLaborHours) * num(form.extraLaborRate)
@@ -478,9 +488,7 @@ export default function CalculatorPage({ onSaveQuote }) {
       : 0;
 
     const finalTotal = roundUpMoney(subtotal + tax);
-    const suggestedDeposit = roundUpMoney(
-      finalTotal * (num(form.depositPercent) / 100)
-    );
+    const suggestedDeposit = roundUpMoney(finalTotal * (num(form.depositPercent) / 100));
     const remainingBalance = roundUpMoney(finalTotal - suggestedDeposit);
     const perUnit = usesQuantity ? roundUpMoney(finalTotal / quantity) : finalTotal;
 
@@ -543,10 +551,7 @@ export default function CalculatorPage({ onSaveQuote }) {
   ]);
 
   function update(key, value) {
-    setForm((current) => ({
-      ...current,
-      [key]: value,
-    }));
+    setForm((current) => ({ ...current, [key]: value }));
   }
 
   function addPrintRun() {
@@ -562,10 +567,7 @@ export default function CalculatorPage({ onSaveQuote }) {
       printRuns: current.printRuns.map((run) => {
         if (run.id !== runId) return run;
 
-        const updatedRun = {
-          ...run,
-          [key]: value,
-        };
+        const updatedRun = { ...run, [key]: value };
 
         if (key === "materialId" || key === "nozzleSize") {
           const material = getPrintMaterial(updatedRun.materialId);
@@ -626,10 +628,7 @@ export default function CalculatorPage({ onSaveQuote }) {
           };
         }
 
-        return {
-          ...line,
-          [key]: value,
-        };
+        return { ...line, [key]: value };
       }),
     }));
   }
@@ -681,28 +680,48 @@ export default function CalculatorPage({ onSaveQuote }) {
 
   function applySuggestedIntegration() {
     setForm((current) => ({
-        ...current,
-        integrationFee: suggestIntegrationFee(current),
+      ...current,
+      integrationFee: suggestIntegrationFee(current),
     }));
   }
 
   function resetCalculator() {
-    setForm({
-      ...DEFAULT_FORM,
-      printRuns: [createPrintRun()],
-      vinylMaterialLines: [createVinylLine()],
-    });
+    setForm(buildInitialForm(null));
+  }
+
+  function saveQuote() {
+    onSaveQuote(
+      {
+        customerName: form.customerName,
+        jobName: form.jobName,
+        jobAspects: form.jobAspects,
+        finalTotal: totals.finalTotal,
+        depositAmount: totals.suggestedDeposit,
+        remainingBalance: totals.remainingBalance,
+        formData: form,
+        totals,
+      },
+      editingQuote?.id || null
+    );
   }
 
   return (
     <section className="page-panel">
       <div className="page-heading-row">
         <div>
-          <h2 className="section-title brand-font">Calculator</h2>
+          <h2 className="section-title brand-font">
+            {editingQuote ? `Editing ${editingQuote.quoteNumber}` : "Calculator"}
+          </h2>
           <p className="muted-text">
             Competitive high-side estimates with stackable print runs, service estimators,
             integration pricing, curved buffer, and market-value sanity checks.
           </p>
+
+          {editingQuote && (
+            <p className="helper-note">
+              Saving will update this quote instead of creating a new quote number.
+            </p>
+          )}
         </div>
 
         <button className="secondary-button" onClick={resetCalculator}>
@@ -1087,7 +1106,9 @@ export default function CalculatorPage({ onSaveQuote }) {
       </div>
 
       <aside className="quote-summary">
-        <h3 className="card-title">Quote Estimate</h3>
+        <h3 className="card-title">
+          {editingQuote ? `Update ${editingQuote.quoteNumber}` : "Quote Estimate"}
+        </h3>
 
         <div className="summary-total">{money(totals.finalTotal)}</div>
         <div className="muted-text">Estimated final quote total</div>
@@ -1129,24 +1150,19 @@ export default function CalculatorPage({ onSaveQuote }) {
           <div><span>Premium Range</span><strong>{money(totals.market.premiumLow)}–{money(totals.market.premiumHigh)}</strong></div>
         </div>
 
-        <button
-          className="primary-button"
-          onClick={() =>
-            onSaveQuote({
-              customerName: form.customerName,
-              jobName: form.jobName,
-              jobAspects: form.jobAspects,
-              finalTotal: totals.finalTotal,
-              depositAmount: totals.suggestedDeposit,
-              remainingBalance: totals.remainingBalance,
-              formData: form,
-              totals,
-            })
-          }
-        >
-          <Save size={18} />
-          Save as Quote
-        </button>
+        <div className={editingQuote ? "record-button-row" : ""}>
+          {editingQuote && (
+            <button className="secondary-button" type="button" onClick={onCancelEdit}>
+              <XCircle size={18} />
+              Cancel Edit
+            </button>
+          )}
+
+          <button className="primary-button" onClick={saveQuote}>
+            <Save size={18} />
+            {editingQuote ? "Update Quote" : "Save as Quote"}
+          </button>
+        </div>
       </aside>
     </section>
   );
