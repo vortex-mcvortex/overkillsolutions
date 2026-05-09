@@ -12,6 +12,7 @@ import CalculatorPage from "./components/CalculatorPage";
 import QuotesPage from "./components/QuotesPage";
 import JobsPage from "./components/JobsPage";
 import PaymentsPage from "./components/PaymentsPage";
+import DashboardPage from "./components/DashboardPage";
 
 import overkillLogo from "./assets/logos/overkill_main.png";
 import overkillMark from "./assets/logos/overkill_mark.png";
@@ -51,7 +52,7 @@ function PlaceholderPage({ title, description }) {
 }
 
 export default function App() {
-  const [activePage, setActivePage] = useState("calculator");
+  const [activePage, setActivePage] = useState("dashboard");
   const [quotes, setQuotes] = useState(() => getInitialState("overkill_quotes", []));
   const [jobs, setJobs] = useState(() => getInitialState("overkill_jobs", []));
   const [usedRecordNumbers, setUsedRecordNumbers] = useState(() =>
@@ -183,7 +184,7 @@ export default function App() {
     saveToStorage(quotes, nextJobs, usedRecordNumbers);
   }
 
-  const dashboardStats = useMemo(() => {
+  const sidebarStats = useMemo(() => {
     const totalQuoted = quotes.reduce(
       (sum, quote) => sum + Number(quote.finalTotal || 0),
       0
@@ -203,16 +204,7 @@ export default function App() {
   }, [quotes, jobs]);
 
   const pageContent = {
-    dashboard: (
-      <PlaceholderPage
-        title="Dashboard"
-        description={`Quotes: ${dashboardStats.totalQuotes}. Jobs: ${
-          dashboardStats.totalJobs
-        }. Active quote value: ${money(
-          dashboardStats.totalQuoted
-        )}. Active job value: ${money(dashboardStats.totalJobsValue)}.`}
-      />
-    ),
+    dashboard: <DashboardPage quotes={quotes} jobs={jobs} />,
     calculator: (
       <CalculatorPage
         onSaveQuote={saveQuote}
@@ -280,22 +272,22 @@ export default function App() {
         <div className="sidebar-mini-stats">
           <div>
             <span>Quotes</span>
-            <strong>{dashboardStats.totalQuotes}</strong>
+            <strong>{sidebarStats.totalQuotes}</strong>
           </div>
 
           <div>
             <span>Jobs</span>
-            <strong>{dashboardStats.totalJobs}</strong>
+            <strong>{sidebarStats.totalJobs}</strong>
           </div>
 
           <div>
             <span>Quoted</span>
-            <strong>{money(dashboardStats.totalQuoted)}</strong>
+            <strong>{money(sidebarStats.totalQuoted)}</strong>
           </div>
 
           <div>
             <span>Jobs Value</span>
-            <strong>{money(dashboardStats.totalJobsValue)}</strong>
+            <strong>{money(sidebarStats.totalJobsValue)}</strong>
           </div>
         </div>
       </aside>

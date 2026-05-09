@@ -8,14 +8,19 @@ function money(value) {
   });
 }
 
-export default function QuotesPage({ quotes, onEditQuote, onConvertToJob }) {
+export default function QuotesPage({
+  quotes,
+  onEditQuote,
+  onConvertToJob,
+}) {
   return (
     <section className="page-panel">
       <div className="page-heading-row">
         <div>
           <h2 className="section-title brand-font">Quotes</h2>
+
           <p className="muted-text">
-            Saved quote history and pricing records. Edit quotes before approval, or convert approved quotes into jobs when the client says go.
+            Saved quote history and pricing records.
           </p>
         </div>
       </div>
@@ -38,7 +43,9 @@ export default function QuotesPage({ quotes, onEditQuote, onConvertToJob }) {
                 <span className="status-pill">{quote.status}</span>
               </div>
 
-              <div className="record-title">{quote.jobName || "Untitled Job"}</div>
+              <div className="record-title">
+                {quote.jobName || "Untitled Job"}
+              </div>
 
               <div className="record-details">
                 <div>
@@ -58,7 +65,11 @@ export default function QuotesPage({ quotes, onEditQuote, onConvertToJob }) {
 
                 <div>
                   <span>Created</span>
-                  <strong>{new Date(quote.createdAt).toLocaleDateString()}</strong>
+                  <strong>
+                    {new Date(
+                      quote.createdAt
+                    ).toLocaleDateString()}
+                  </strong>
                 </div>
               </div>
 
@@ -73,7 +84,6 @@ export default function QuotesPage({ quotes, onEditQuote, onConvertToJob }) {
               <div className="record-button-row">
                 <button
                   className="secondary-button"
-                  type="button"
                   onClick={() => onEditQuote(quote.id)}
                 >
                   <Pencil size={18} />
@@ -82,7 +92,6 @@ export default function QuotesPage({ quotes, onEditQuote, onConvertToJob }) {
 
                 <button
                   className="secondary-button"
-                  type="button"
                   onClick={() => exportQuotePdf(quote)}
                 >
                   <FileDown size={18} />
@@ -91,7 +100,6 @@ export default function QuotesPage({ quotes, onEditQuote, onConvertToJob }) {
 
                 <button
                   className="primary-button record-action"
-                  type="button"
                   onClick={() => onConvertToJob(quote.id)}
                 >
                   Convert to Job

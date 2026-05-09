@@ -1,4 +1,5 @@
-import { Plus, Trash2, Save } from "lucide-react";
+import { Plus, Trash2, Save, FileDown } from "lucide-react";
+import { exportInvoicePdf } from "../utils/pdf";
 
 const PAYMENT_METHODS = ["Venmo", "Cash", "Cash App", "PayPal", "Zelle"];
 
@@ -87,6 +88,50 @@ function getQuotedPrintRuns(job) {
   return job?.quoteSnapshot?.formData?.printRuns || job?.formData?.printRuns || [];
 }
 
+function getFormData(job) {
+  return job?.quoteSnapshot?.formData || job?.formData || {};
+}
+
+function buildMachineOptions(job) {
+  const formData = getFormData(job);
+  const quotedPrintRuns = getQuotedPrintRuns(job);
+
+  const options = [
+    { value: "", label: "General" },
+    { value: "CAD", label: "CAD" },
+    { value: "Assembly", label: "Assembly" },
+    { value: "Cleanup", label: "Cleanup" },
+  ];
+
+  quotedPrintRuns.forEach((run, runIndex) => {
+    const printer = run.printerId || "Printer";
+    const nozzle = run.nozzleSize || "Nozzle";
+    const material = run.materialId || "Material";
+    const label = `Run ${runIndex + 1}: ${printer} / ${nozzle}mm / ${material}`;
+
+    options.push({
+      value: label,
+      label,
+    });
+  });
+
+  if (job.jobAspects?.engraving || formData.jobAspects?.engraving) {
+    options.push(
+      { value: "H2S Laser — 10W", label: "H2S Laser — 10W" },
+      { value: "H2S Laser — 40W", label: "H2S Laser — 40W" }
+    );
+  }
+
+  if (job.jobAspects?.vinyl || formData.jobAspects?.vinyl) {
+    options.push({
+      value: "H2S Cutter",
+      label: "H2S Cutter",
+    });
+  }
+
+  return options;
+}
+
 function pairTimeEvents(events) {
   const normalizedEvents = events.map(normalizeOldEvent);
 
@@ -173,9 +218,9 @@ export default function JobsPage({ jobs, onUpdateJob }) {
     if (!job) return;
 
     onUpdateJob(jobId, {
-        timeEvents: [createTimeEvent(), ...(job.timeEvents || [])],
+      timeEvents: [createTimeEvent(), ...(job.timeEvents || [])],
     });
-}
+  }
 
   function updateTimeEvent(jobId, eventId, key, value) {
     const job = jobs.find((item) => item.id === jobId);
@@ -183,7 +228,9 @@ export default function JobsPage({ jobs, onUpdateJob }) {
 
     onUpdateJob(jobId, {
       timeEvents: (job.timeEvents || []).map((event) =>
-        event.id === eventId ? { ...normalizeOldEvent(event), [key]: value } : normalizeOldEvent(event)
+        event.id === eventId
+          ? { ...normalizeOldEvent(event), [key]: value }
+          : normalizeOldEvent(event)
       ),
     });
   }
@@ -200,6 +247,7 @@ export default function JobsPage({ jobs, onUpdateJob }) {
   function calculateJobActuals(job) {
     const actuals = job.actuals || {};
     const payments = job.payments || {};
+    const paymentEvents = job.paymentEvents || [];
     const timeEvents = job.timeEvents || [];
     const pairedEvents = pairTimeEvents(timeEvents);
 
@@ -230,7 +278,15 @@ export default function JobsPage({ jobs, onUpdateJob }) {
       extraCost;
 
     const customerTotal = num(job.finalTotal);
-    const totalPaid = num(payments.depositPaid) + num(payments.additionalPaid);
+
+    const ledgerPaid = paymentEvents.reduce((sum, payment) => {
+      if (payment.type === "Refund") return sum - num(payment.amount);
+      return sum + num(payment.amount);
+    }, 0);
+
+    const legacyPaid = num(payments.depositPaid) + num(payments.additionalPaid);
+    const totalPaid = ledgerPaid || legacyPaid;
+
     const remainingToCollect = Math.max(0, customerTotal - totalPaid);
     const estimatedProfit = customerTotal - totalActualCost;
     const profitMargin =
@@ -292,7 +348,8 @@ export default function JobsPage({ jobs, onUpdateJob }) {
             };
 
             const timeEvents = (job.timeEvents || []).map(normalizeOldEvent);
-            const quotedPrintRuns = getQuotedPrintRuns(job);
+            const machineOptions = buildMachineOptions(job);
+
             const calc = calculateJobActuals({
               ...job,
               actuals,
@@ -321,13 +378,23 @@ export default function JobsPage({ jobs, onUpdateJob }) {
                   {job.jobAspects?.custom && <span>Custom</span>}
                 </div>
 
-                <button
-                  className="primary-button record-action"
-                  onClick={() => saveJob(job.id)}
-                >
-                  <Save size={18} />
-                  Save Job Changes
-                </button>
+                <div className="record-button-row">
+                  <button
+                    className="primary-button record-action"
+                    onClick={() => saveJob(job.id)}
+                  >
+                    <Save size={18} />
+                    Save Job Changes
+                  </button>
+
+                  <button
+                    className="secondary-button record-action"
+                    onClick={() => exportInvoicePdf(job)}
+                  >
+                    <FileDown size={18} />
+                    Export Invoice PDF
+                  </button>
+                </div>
 
                 {job.lastSavedAt && (
                   <p className="helper-note">
@@ -430,22 +497,11 @@ export default function JobsPage({ jobs, onUpdateJob }) {
                                   updateTimeEvent(job.id, event.id, "label", change.target.value)
                                 }
                               >
-                                <option value="">General</option>
-                                <option value="CAD">CAD</option>
-                                <option value="Assembly">Assembly</option>
-                                <option value="Cleanup">Cleanup</option>
-                                {quotedPrintRuns.map((run, runIndex) => {
-                                  const printer = run.printerId || "Printer";
-                                  const nozzle = run.nozzleSize || "Nozzle";
-                                  const material = run.materialId || "Material";
-                                  const label = `Run ${runIndex + 1}: ${printer} / ${nozzle}mm / ${material}`;
-
-                                  return (
-                                    <option key={run.id || runIndex} value={label}>
-                                      {label}
-                                    </option>
-                                  );
-                                })}
+                                {machineOptions.map((option) => (
+                                  <option key={option.value || "general"} value={option.value}>
+                                    {option.label}
+                                  </option>
+                                ))}
                               </select>
                             </label>
 
@@ -474,7 +530,7 @@ export default function JobsPage({ jobs, onUpdateJob }) {
                               onChange={(change) =>
                                 updateTimeEvent(job.id, event.id, "notes", change.target.value)
                               }
-                              placeholder="P1S started, X1C stopped, CAD revision started, customer requested change, etc."
+                              placeholder="P1S started, H2S laser stopped, CAD revision started, customer requested change, etc."
                             />
                           </label>
                         </div>
@@ -537,7 +593,7 @@ export default function JobsPage({ jobs, onUpdateJob }) {
                   </div>
 
                   <div className="form-card">
-                    <h3 className="card-title">Payments</h3>
+                    <h3 className="card-title">Legacy Quick Payments</h3>
 
                     <div className="form-grid">
                       <Field
@@ -574,9 +630,13 @@ export default function JobsPage({ jobs, onUpdateJob }) {
                         onChange={(event) =>
                           updatePayment(job.id, "paymentNotes", event.target.value)
                         }
-                        placeholder="Date paid, who paid, partial payment notes, etc."
+                        placeholder="Main payment tracking now lives in the Payments tab."
                       />
                     </label>
+
+                    <p className="helper-note">
+                      Main payment ledger is in the Payments tab. These fields are kept for older jobs and quick notes.
+                    </p>
                   </div>
                 </div>
               </article>

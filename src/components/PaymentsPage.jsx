@@ -1,4 +1,5 @@
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, FileDown } from "lucide-react";
+import { exportInvoicePdf } from "../utils/pdf";
 
 const PAYMENT_TYPES = ["Deposit", "Partial Payment", "Final Payment", "Refund", "Other"];
 const PAYMENT_METHODS = ["Venmo", "Cash", "Cash App", "PayPal", "Zelle"];
@@ -47,7 +48,19 @@ function getPaymentStatus(total, paid) {
   return "Partially Paid";
 }
 
-export default function PaymentsPage({ jobs, selectedJobId, onSelectJob, onUpdateJob }) {
+function getPaidTotal(job) {
+  return (job.paymentEvents || []).reduce((sum, payment) => {
+    if (payment.type === "Refund") return sum - num(payment.amount);
+    return sum + num(payment.amount);
+  }, 0);
+}
+
+export default function PaymentsPage({
+  jobs,
+  selectedJobId,
+  onSelectJob,
+  onUpdateJob,
+}) {
   const selectedJob = jobs.find((job) => job.id === selectedJobId) || jobs[0];
 
   function addPayment(jobId) {
@@ -85,6 +98,7 @@ export default function PaymentsPage({ jobs, selectedJobId, onSelectJob, onUpdat
     return (
       <section className="page-panel">
         <h2 className="section-title brand-font">Payments</h2>
+
         <div className="empty-state">
           <h3>No jobs available.</h3>
           <p>Convert a quote to a job before tracking payments.</p>
@@ -94,11 +108,7 @@ export default function PaymentsPage({ jobs, selectedJobId, onSelectJob, onUpdat
   }
 
   const payments = selectedJob?.paymentEvents || [];
-  const totalPaid = payments.reduce((sum, payment) => {
-    if (payment.type === "Refund") return sum - num(payment.amount);
-    return sum + num(payment.amount);
-  }, 0);
-
+  const totalPaid = getPaidTotal(selectedJob);
   const quotedTotal = num(selectedJob?.finalTotal);
   const remaining = Math.max(0, quotedTotal - totalPaid);
   const status = getPaymentStatus(quotedTotal, totalPaid);
@@ -119,12 +129,7 @@ export default function PaymentsPage({ jobs, selectedJobId, onSelectJob, onUpdat
           <h3 className="card-title">Jobs</h3>
 
           {jobs.map((job) => {
-            const jobPayments = job.paymentEvents || [];
-            const jobPaid = jobPayments.reduce((sum, payment) => {
-              if (payment.type === "Refund") return sum - num(payment.amount);
-              return sum + num(payment.amount);
-            }, 0);
-
+            const jobPaid = getPaidTotal(job);
             const isActive = selectedJob?.id === job.id;
 
             return (
@@ -135,7 +140,9 @@ export default function PaymentsPage({ jobs, selectedJobId, onSelectJob, onUpdat
               >
                 <strong>{job.jobNumber}</strong>
                 <span>{job.jobName || "Untitled Job"}</span>
-                <small>{money(jobPaid)} / {money(job.finalTotal)}</small>
+                <small>
+                  {money(jobPaid)} / {money(job.finalTotal)}
+                </small>
               </button>
             );
           })}
@@ -152,25 +159,48 @@ export default function PaymentsPage({ jobs, selectedJobId, onSelectJob, onUpdat
               <span className="status-pill">{status}</span>
             </div>
 
-            <div className="record-title">{selectedJob.jobName || "Untitled Job"}</div>
+            <div className="record-title">
+              {selectedJob.jobName || "Untitled Job"}
+            </div>
 
             <div className="job-summary-grid">
               <div>
                 <span>Quoted Total</span>
                 <strong>{money(quotedTotal)}</strong>
               </div>
+
               <div>
                 <span>Total Paid</span>
                 <strong>{money(totalPaid)}</strong>
               </div>
+
               <div>
                 <span>Remaining</span>
                 <strong>{money(remaining)}</strong>
               </div>
+
               <div>
                 <span>Payment Status</span>
                 <strong>{status}</strong>
               </div>
+            </div>
+
+            <div className="record-button-row single-row-gap">
+              <button
+                className="secondary-button"
+                onClick={() => exportInvoicePdf(selectedJob)}
+              >
+                <FileDown size={18} />
+                Export Invoice PDF
+              </button>
+
+              <button
+                className="secondary-button"
+                onClick={() => addPayment(selectedJob.id)}
+              >
+                <Plus size={18} />
+                Add Payment
+              </button>
             </div>
 
             <div className="page-heading-row single-row-gap">
@@ -180,14 +210,6 @@ export default function PaymentsPage({ jobs, selectedJobId, onSelectJob, onUpdat
                   Add one payment event at a time, similar to the production log.
                 </p>
               </div>
-
-              <button
-                className="secondary-button"
-                onClick={() => addPayment(selectedJob.id)}
-              >
-                <Plus size={18} />
-                Add Payment
-              </button>
             </div>
 
             <div className="vinyl-lines">
@@ -207,11 +229,18 @@ export default function PaymentsPage({ jobs, selectedJobId, onSelectJob, onUpdat
                         <select
                           value={payment.type}
                           onChange={(event) =>
-                            updatePayment(selectedJob.id, payment.id, "type", event.target.value)
+                            updatePayment(
+                              selectedJob.id,
+                              payment.id,
+                              "type",
+                              event.target.value
+                            )
                           }
                         >
                           {PAYMENT_TYPES.map((type) => (
-                            <option key={type} value={type}>{type}</option>
+                            <option key={type} value={type}>
+                              {type}
+                            </option>
                           ))}
                         </select>
                       </label>
@@ -221,11 +250,18 @@ export default function PaymentsPage({ jobs, selectedJobId, onSelectJob, onUpdat
                         <select
                           value={payment.method}
                           onChange={(event) =>
-                            updatePayment(selectedJob.id, payment.id, "method", event.target.value)
+                            updatePayment(
+                              selectedJob.id,
+                              payment.id,
+                              "method",
+                              event.target.value
+                            )
                           }
                         >
                           {PAYMENT_METHODS.map((method) => (
-                            <option key={method} value={method}>{method}</option>
+                            <option key={method} value={method}>
+                              {method}
+                            </option>
                           ))}
                         </select>
                       </label>
@@ -272,7 +308,12 @@ export default function PaymentsPage({ jobs, selectedJobId, onSelectJob, onUpdat
                       <textarea
                         value={payment.notes}
                         onChange={(event) =>
-                          updatePayment(selectedJob.id, payment.id, "notes", event.target.value)
+                          updatePayment(
+                            selectedJob.id,
+                            payment.id,
+                            "notes",
+                            event.target.value
+                          )
                         }
                         placeholder="Deposit received through Venmo, final cash payment, refund reason, etc."
                       />
