@@ -15,6 +15,9 @@ const PAGE = {
   bottom: 272,
 };
 
+const START_MARKER = "OVERKILL_DATA_START";
+const END_MARKER = "OVERKILL_DATA_END";
+
 function money(value) {
   return Number(value || 0).toLocaleString("en-US", {
     style: "currency",
@@ -32,6 +35,51 @@ function safeFileName(value) {
     .replace(/[^a-z0-9-_ ]/gi, "")
     .replace(/\s+/g, "-")
     .toLowerCase();
+}
+
+function encodeBase64Unicode(value) {
+  const json = JSON.stringify(value);
+  const bytes = new TextEncoder().encode(json);
+
+  let binary = "";
+  const chunkSize = 0x8000;
+
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    const chunk = bytes.subarray(index, index + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+
+  return btoa(binary);
+}
+
+function addEmbeddedData(doc, payload) {
+  const encoded = encodeBase64Unicode(payload);
+  const fullText = `${START_MARKER}${encoded}${END_MARKER}`;
+  const chunks = fullText.match(/.{1,90}/g) || [];
+
+  const originalPage = doc.internal.getCurrentPageInfo().pageNumber;
+
+  doc.addPage();
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(1);
+  doc.setTextColor(255, 255, 255);
+
+  let y = 4;
+
+  chunks.forEach((chunk) => {
+    if (y > 285) {
+      doc.addPage();
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(1);
+      doc.setTextColor(255, 255, 255);
+      y = 4;
+    }
+
+    doc.text(chunk, 2, y);
+    y += 2;
+  });
+
+  doc.setPage(originalPage);
 }
 
 function buildAspectList(jobAspects = {}) {
@@ -409,6 +457,14 @@ export function exportQuotePdf(quote) {
 
   addWrappedText(doc, terms, y, documentTitle, numberText);
 
+  addEmbeddedData(doc, {
+    app: "overkill-solutions-app",
+    version: 1,
+    kind: "quote",
+    exportedAt: new Date().toISOString(),
+    record: quote,
+  });
+
   doc.save(
     `${safeFileName(quote.quoteNumber)}-${safeFileName(
       quote.customerName
@@ -521,6 +577,14 @@ export function exportInvoicePdf(job) {
     documentTitle,
     numberText
   );
+
+  addEmbeddedData(doc, {
+    app: "overkill-solutions-app",
+    version: 1,
+    kind: "job",
+    exportedAt: new Date().toISOString(),
+    record: job,
+  });
 
   doc.save(
     `${safeFileName(invoiceNumber)}-${safeFileName(

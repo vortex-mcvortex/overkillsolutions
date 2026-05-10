@@ -13,6 +13,8 @@ import QuotesPage from "./components/QuotesPage";
 import JobsPage from "./components/JobsPage";
 import PaymentsPage from "./components/PaymentsPage";
 import DashboardPage from "./components/DashboardPage";
+import SettingsPage from "./components/SettingsPage";
+import { importOverkillPdf } from "./utils/pdfImport";
 
 import overkillLogo from "./assets/logos/overkill_main.png";
 import overkillMark from "./assets/logos/overkill_mark.png";
@@ -42,13 +44,19 @@ function getInitialState(key, fallback) {
   }
 }
 
-function PlaceholderPage({ title, description }) {
-  return (
-    <section className="page-panel">
-      <h2 className="section-title brand-font">{title}</h2>
-      <p className="muted-text">{description}</p>
-    </section>
-  );
+function parseRecordNumber(value) {
+  const match = String(value || "").match(/(\d+)/);
+  return match ? Number(match[1]) : null;
+}
+
+function normalizeImportedAspects(record) {
+  return {
+    cad: Boolean(record?.jobAspects?.cad),
+    printing: Boolean(record?.jobAspects?.printing),
+    engraving: Boolean(record?.jobAspects?.engraving),
+    vinyl: Boolean(record?.jobAspects?.vinyl),
+    custom: Boolean(record?.jobAspects?.custom),
+  };
 }
 
 export default function App() {
@@ -60,6 +68,7 @@ export default function App() {
   );
   const [selectedPaymentJobId, setSelectedPaymentJobId] = useState("");
   const [editingQuoteId, setEditingQuoteId] = useState(null);
+  const [importMessage, setImportMessage] = useState("");
 
   const editingQuote = quotes.find((quote) => quote.id === editingQuoteId) || null;
 
@@ -72,12 +81,28 @@ export default function App() {
     );
   }
 
-  function generateNextRecordNumber() {
-    const highest = usedRecordNumbers.length
-      ? Math.max(...usedRecordNumbers)
-      : 1000;
+  function generateNextRecordNumber(numberList = usedRecordNumbers) {
+    let nextNumber = 1001;
 
-    return highest + 1;
+    while (numberList.includes(nextNumber)) {
+      nextNumber += 1;
+    }
+
+    return nextNumber;
+  }
+
+  function resolveImportedRecordNumber(record, currentUsedNumbers) {
+    const originalNumber =
+      Number(record?.recordNumber) ||
+      parseRecordNumber(record?.quoteNumber) ||
+      parseRecordNumber(record?.jobNumber) ||
+      parseRecordNumber(record?.invoiceNumber);
+
+    if (originalNumber && !currentUsedNumbers.includes(originalNumber)) {
+      return originalNumber;
+    }
+
+    return generateNextRecordNumber(currentUsedNumbers);
   }
 
   function saveQuote(quoteData, editingId = null) {
@@ -121,6 +146,40 @@ export default function App() {
     saveToStorage(nextQuotes, jobs, nextUsedNumbers);
     setEditingQuoteId(null);
     setActivePage("quotes");
+  }
+
+  function deleteQuote(quoteId) {
+    const quote = quotes.find((item) => item.id === quoteId);
+    if (!quote) return;
+
+    const confirmed = window.confirm(
+      `Delete ${quote.quoteNumber || "this quote"}? This cannot be undone.`
+    );
+
+    if (!confirmed) return;
+
+    const shouldReuseNumber = window.confirm(
+      `Do you want to reuse ${quote.quoteNumber || "this quote number"} later?\n\nOK = release/reuse the number\nCancel = keep the number reserved`
+    );
+
+    const nextQuotes = quotes.filter((item) => item.id !== quoteId);
+
+    let nextUsedNumbers = usedRecordNumbers;
+
+    if (shouldReuseNumber && quote.recordNumber) {
+      nextUsedNumbers = usedRecordNumbers.filter(
+        (number) => number !== quote.recordNumber
+      );
+    }
+
+    setQuotes(nextQuotes);
+    setUsedRecordNumbers(nextUsedNumbers);
+
+    if (editingQuoteId === quoteId) {
+      setEditingQuoteId(null);
+    }
+
+    saveToStorage(nextQuotes, jobs, nextUsedNumbers);
   }
 
   function startEditQuote(quoteId) {
@@ -184,6 +243,114 @@ export default function App() {
     saveToStorage(quotes, nextJobs, usedRecordNumbers);
   }
 
+  async function importPdfFile(file, preferredKind = "auto") {
+    if (!file) return;
+
+    try {
+      setImportMessage("Importing PDF...");
+
+      const imported = await importOverkillPdf(file);
+      const record = imported.record || {};
+      const kind = preferredKind === "auto" ? imported.kind : preferredKind;
+
+      const recordNumber = resolveImportedRecordNumber(record, usedRecordNumbers);
+      const nextUsedNumbers = [...usedRecordNumbers, recordNumber];
+      const now = new Date().toISOString();
+
+      if (kind === "job") {
+        const quoteNumber = record.quoteNumber || `Q-${recordNumber}`;
+        const jobNumber = `J-${recordNumber}`;
+
+        const importedJob = {
+          ...record,
+          id: crypto.randomUUID(),
+          recordNumber,
+          quoteNumber,
+          jobNumber,
+          invoiceNumber: record.invoiceNumber || `INV-${recordNumber}`,
+          status: record.status || "Approved",
+          customerName: record.customerName || "Imported Customer",
+          jobName: record.jobName || "Imported PDF Job",
+          jobAspects: normalizeImportedAspects(record),
+          finalTotal: Number(record.finalTotal || 0),
+          depositAmount: Number(record.depositAmount || 0),
+          remainingBalance: Number(record.remainingBalance || record.finalTotal || 0),
+          formData: record.formData || {},
+          totals: record.totals || {},
+          quoteSnapshot: record.quoteSnapshot || {
+            ...record,
+            quoteNumber,
+            recordNumber,
+          },
+          actuals: record.actuals || {
+            materialCost: 0,
+            failedPrintCost: 0,
+            extraCost: 0,
+            notes: "",
+          },
+          timeEvents: record.timeEvents || [],
+          paymentEvents: record.paymentEvents || [],
+          importedAt: now,
+          importedFromPdf: true,
+          updatedAt: now,
+          approvedAt: record.approvedAt || now,
+        };
+
+        const nextJobs = [importedJob, ...jobs];
+
+        setJobs(nextJobs);
+        setUsedRecordNumbers(nextUsedNumbers);
+        setSelectedPaymentJobId(importedJob.id);
+        saveToStorage(quotes, nextJobs, nextUsedNumbers);
+        setActivePage("jobs");
+        setImportMessage(
+          imported.source === "embedded-overkill-data"
+            ? `Imported ${importedJob.jobNumber} from embedded PDF data.`
+            : `Imported a limited fallback job from PDF text as ${importedJob.jobNumber}.`
+        );
+
+        return;
+      }
+
+      const importedQuote = {
+        ...record,
+        id: crypto.randomUUID(),
+        recordNumber,
+        quoteNumber: `Q-${recordNumber}`,
+        jobNumber: null,
+        invoiceNumber: null,
+        status: record.status || "Draft Quote",
+        customerName: record.customerName || "Imported Customer",
+        jobName: record.jobName || "Imported PDF Quote",
+        jobAspects: normalizeImportedAspects(record),
+        finalTotal: Number(record.finalTotal || 0),
+        depositAmount: Number(record.depositAmount || 0),
+        remainingBalance: Number(record.remainingBalance || record.finalTotal || 0),
+        formData: record.formData || {},
+        totals: record.totals || {},
+        importedAt: now,
+        importedFromPdf: true,
+        createdAt: record.createdAt || now,
+        updatedAt: now,
+      };
+
+      const nextQuotes = [importedQuote, ...quotes];
+
+      setQuotes(nextQuotes);
+      setUsedRecordNumbers(nextUsedNumbers);
+      saveToStorage(nextQuotes, jobs, nextUsedNumbers);
+      setActivePage("quotes");
+      setImportMessage(
+        imported.source === "embedded-overkill-data"
+          ? `Imported ${importedQuote.quoteNumber} from embedded PDF data.`
+          : `Imported a limited fallback quote from PDF text as ${importedQuote.quoteNumber}.`
+      );
+    } catch (error) {
+      console.error(error);
+      setImportMessage("PDF import failed. This PDF may not contain readable Overkill data.");
+    }
+  }
+
   const sidebarStats = useMemo(() => {
     const totalQuoted = quotes.reduce(
       (sum, quote) => sum + Number(quote.finalTotal || 0),
@@ -217,9 +384,19 @@ export default function App() {
         quotes={quotes}
         onEditQuote={startEditQuote}
         onConvertToJob={convertQuoteToJob}
+        onDeleteQuote={deleteQuote}
+        onImportPdf={(file) => importPdfFile(file, "quote")}
+        importMessage={importMessage}
       />
     ),
-    jobs: <JobsPage jobs={jobs} onUpdateJob={updateJob} />,
+    jobs: (
+      <JobsPage
+        jobs={jobs}
+        onUpdateJob={updateJob}
+        onImportPdf={(file) => importPdfFile(file, "job")}
+        importMessage={importMessage}
+      />
+    ),
     payments: (
       <PaymentsPage
         jobs={jobs}
@@ -228,12 +405,7 @@ export default function App() {
         onUpdateJob={updateJob}
       />
     ),
-    settings: (
-      <PlaceholderPage
-        title="Settings"
-        description="Rates, materials, payment methods, tax options, and app preferences will live here."
-      />
-    ),
+    settings: <SettingsPage />,
   };
 
   return (

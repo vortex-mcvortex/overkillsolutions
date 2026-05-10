@@ -1,4 +1,5 @@
-import { Plus, Trash2, Save, FileDown } from "lucide-react";
+import { useRef } from "react";
+import { Plus, Trash2, Save, FileDown, Upload } from "lucide-react";
 import { exportInvoicePdf } from "../utils/pdf";
 
 const PAYMENT_METHODS = ["Venmo", "Cash", "Cash App", "PayPal", "Zelle"];
@@ -182,7 +183,24 @@ function pairTimeEvents(events) {
   return paired;
 }
 
-export default function JobsPage({ jobs, onUpdateJob }) {
+export default function JobsPage({
+  jobs,
+  onUpdateJob,
+  onImportPdf,
+  importMessage,
+}) {
+  const fileInputRef = useRef(null);
+
+  function handleImportChange(event) {
+    const file = event.target.files?.[0];
+
+    if (file) {
+      onImportPdf(file);
+    }
+
+    event.target.value = "";
+  }
+
   function saveJob(jobId) {
     onUpdateJob(jobId, {
       lastSavedAt: new Date().toISOString(),
@@ -320,6 +338,27 @@ export default function JobsPage({ jobs, onUpdateJob }) {
           <p className="muted-text">
             Approved work with editable timestamp logs, actual costs, payments, and profit estimates.
           </p>
+
+          {importMessage && <p className="helper-note">{importMessage}</p>}
+        </div>
+
+        <div>
+          <input
+            ref={fileInputRef}
+            className="hidden-file-input"
+            type="file"
+            accept="application/pdf"
+            onChange={handleImportChange}
+          />
+
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <Upload size={18} />
+            Import Invoice PDF
+          </button>
         </div>
       </div>
 
@@ -376,6 +415,7 @@ export default function JobsPage({ jobs, onUpdateJob }) {
                   {job.jobAspects?.engraving && <span>Engraving</span>}
                   {job.jobAspects?.vinyl && <span>Vinyl</span>}
                   {job.jobAspects?.custom && <span>Custom</span>}
+                  {job.importedFromPdf && <span>Imported PDF</span>}
                 </div>
 
                 <div className="record-button-row">

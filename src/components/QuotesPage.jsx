@@ -1,4 +1,5 @@
-import { FileDown, Pencil } from "lucide-react";
+import { useRef } from "react";
+import { FileDown, Pencil, Upload, Trash2 } from "lucide-react";
 import { exportQuotePdf } from "../utils/pdf";
 
 function money(value) {
@@ -12,7 +13,22 @@ export default function QuotesPage({
   quotes,
   onEditQuote,
   onConvertToJob,
+  onDeleteQuote,
+  onImportPdf,
+  importMessage,
 }) {
+  const fileInputRef = useRef(null);
+
+  function handleImportChange(event) {
+    const file = event.target.files?.[0];
+
+    if (file) {
+      onImportPdf(file);
+    }
+
+    event.target.value = "";
+  }
+
   return (
     <section className="page-panel">
       <div className="page-heading-row">
@@ -22,6 +38,27 @@ export default function QuotesPage({
           <p className="muted-text">
             Saved quote history and pricing records.
           </p>
+
+          {importMessage && <p className="helper-note">{importMessage}</p>}
+        </div>
+
+        <div>
+          <input
+            ref={fileInputRef}
+            className="hidden-file-input"
+            type="file"
+            accept="application/pdf"
+            onChange={handleImportChange}
+          />
+
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <Upload size={18} />
+            Import Quote PDF
+          </button>
         </div>
       </div>
 
@@ -79,9 +116,10 @@ export default function QuotesPage({
                 {quote.jobAspects?.engraving && <span>Engraving</span>}
                 {quote.jobAspects?.vinyl && <span>Vinyl</span>}
                 {quote.jobAspects?.custom && <span>Custom</span>}
+                {quote.importedFromPdf && <span>Imported PDF</span>}
               </div>
 
-              <div className="record-button-row">
+              <div className="record-button-row quote-button-row">
                 <button
                   className="secondary-button"
                   onClick={() => onEditQuote(quote.id)}
@@ -96,6 +134,14 @@ export default function QuotesPage({
                 >
                   <FileDown size={18} />
                   Export PDF
+                </button>
+
+                <button
+                  className="secondary-button danger-button"
+                  onClick={() => onDeleteQuote(quote.id)}
+                >
+                  <Trash2 size={18} />
+                  Delete Quote
                 </button>
 
                 <button
