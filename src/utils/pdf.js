@@ -227,13 +227,33 @@ function addWrappedText(doc, text, y, documentTitle, numberText) {
   return currentY + 8;
 }
 
+function buildContactRows(record) {
+  const rows = [
+    ["Customer", record.customerName || "Unnamed Customer"],
+  ];
+
+  if (record.customerPhone || record.formData?.customerPhone) {
+    rows.push(["Phone", record.customerPhone || record.formData?.customerPhone || ""]);
+  }
+
+  if (record.customerEmail || record.formData?.customerEmail) {
+    rows.push(["Email", record.customerEmail || record.formData?.customerEmail || ""]);
+  }
+
+  if (record.customerAddress || record.formData?.customerAddress) {
+    rows.push(["Address", record.customerAddress || record.formData?.customerAddress || ""]);
+  }
+
+  return rows;
+}
+
 function addInfoBlock(doc, record, startY, title, numberText, extraRows = []) {
   const date = new Date(
     record.createdAt || record.approvedAt || Date.now()
   ).toLocaleDateString();
 
   const rows = [
-    ["Customer", record.customerName || "Unnamed Customer"],
+    ...buildContactRows(record),
     ["Project", record.jobName || "Untitled Project"],
     ["Date", date],
     ["Services", buildAspectList(record.jobAspects)],
@@ -249,6 +269,7 @@ function addInfoBlock(doc, record, startY, title, numberText, extraRows = []) {
     styles: {
       fontSize: 10,
       cellPadding: 2,
+      overflow: "linebreak",
     },
     columnStyles: {
       0: {
@@ -258,6 +279,7 @@ function addInfoBlock(doc, record, startY, title, numberText, extraRows = []) {
       },
       1: {
         textColor: [30, 30, 30],
+        cellWidth: 144,
       },
     },
     margin: {
@@ -354,6 +376,8 @@ function applyBufferToQuoteRows(totals, form, record) {
     ["Vinyl Material", buffered(totals.vinylMaterialCost)],
     ["Vinyl Service", buffered(totals.vinylCost)],
     ["Project Integration", buffered(totals.integrationCost)],
+    ["Custom Fabrication", buffered(totals.customCost)],
+    ["Extra Labor", buffered(totals.extraLaborCost)],
     ["Finishing / Delivery / Other", buffered(finishingOther)],
     ["Discount", `-${money(form.discount)}`],
     ["Tax", money(totals.tax)],
@@ -406,6 +430,10 @@ function buildProductionSummary(job) {
     rows.push(["Vinyl Cutting", "H2S cutting/vinyl service included as quoted."]);
   }
 
+  if (form.customerAddress) {
+    rows.push(["Shipping / Delivery Address", form.customerAddress]);
+  }
+
   if (form.notes) {
     rows.push(["Project Notes", form.notes]);
   }
@@ -450,7 +478,7 @@ export function exportQuotePdf(quote) {
 
   const terms = [
     "This quote is an estimate based on the project details available at the time it was created.",
-    "Final pricing may change if project scope, material choice, quantity, design requirements, or supply costs change.",
+    "Final pricing may change if project scope, material choice, quantity, design requirements, shipping, or supply costs change.",
     "Custom work may require a deposit before production begins.",
     "Accepted payment methods: Cash, Venmo, Cash App, PayPal, and Zelle.",
   ].join("\n");

@@ -204,6 +204,7 @@ export default function App() {
       jobNumber: `J-${quote.recordNumber}`,
       invoiceNumber: null,
       status: "Approved",
+      archived: false,
       approvedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       quoteSnapshot: { ...quote },
@@ -243,6 +244,52 @@ export default function App() {
     saveToStorage(quotes, nextJobs, usedRecordNumbers);
   }
 
+  function archiveJob(jobId) {
+    const job = jobs.find((item) => item.id === jobId);
+    if (!job) return;
+
+    const confirmed = window.confirm(
+      `Archive ${job.jobNumber || "this job"}? It will move out of Active Jobs but keep all history.`
+    );
+
+    if (!confirmed) return;
+
+    updateJob(jobId, {
+      archived: true,
+      archivedAt: new Date().toISOString(),
+      status: job.status === "Completed" || job.status === "Cancelled" ? job.status : "Completed",
+    });
+  }
+
+  function restoreJob(jobId) {
+    updateJob(jobId, {
+      archived: false,
+      archivedAt: null,
+      status: "In Production",
+    });
+  }
+
+  function deleteJob(jobId) {
+    const job = jobs.find((item) => item.id === jobId);
+    if (!job) return;
+
+    const confirmed = window.confirm(
+      `Permanently delete ${job.jobNumber || "this job"}? This cannot be undone.`
+    );
+
+    if (!confirmed) return;
+
+    const nextJobs = jobs.filter((item) => item.id !== jobId);
+
+    setJobs(nextJobs);
+
+    if (selectedPaymentJobId === jobId) {
+      setSelectedPaymentJobId("");
+    }
+
+    saveToStorage(quotes, nextJobs, usedRecordNumbers);
+  }
+
   async function importPdfFile(file, preferredKind = "auto") {
     if (!file) return;
 
@@ -269,6 +316,8 @@ export default function App() {
           jobNumber,
           invoiceNumber: record.invoiceNumber || `INV-${recordNumber}`,
           status: record.status || "Approved",
+          archived: Boolean(record.archived),
+          archivedAt: record.archivedAt || null,
           customerName: record.customerName || "Imported Customer",
           jobName: record.jobName || "Imported PDF Job",
           jobAspects: normalizeImportedAspects(record),
@@ -352,19 +401,21 @@ export default function App() {
   }
 
   const sidebarStats = useMemo(() => {
+    const activeJobs = jobs.filter((job) => !job.archived);
+
     const totalQuoted = quotes.reduce(
       (sum, quote) => sum + Number(quote.finalTotal || 0),
       0
     );
 
-    const totalJobsValue = jobs.reduce(
+    const totalJobsValue = activeJobs.reduce(
       (sum, job) => sum + Number(job.finalTotal || 0),
       0
     );
 
     return {
       totalQuotes: quotes.length,
-      totalJobs: jobs.length,
+      totalJobs: activeJobs.length,
       totalQuoted,
       totalJobsValue,
     };
@@ -393,13 +444,16 @@ export default function App() {
       <JobsPage
         jobs={jobs}
         onUpdateJob={updateJob}
+        onArchiveJob={archiveJob}
+        onRestoreJob={restoreJob}
+        onDeleteJob={deleteJob}
         onImportPdf={(file) => importPdfFile(file, "job")}
         importMessage={importMessage}
       />
     ),
     payments: (
       <PaymentsPage
-        jobs={jobs}
+        jobs={jobs.filter((job) => !job.archived)}
         selectedJobId={selectedPaymentJobId}
         onSelectJob={setSelectedPaymentJobId}
         onUpdateJob={updateJob}
@@ -448,7 +502,7 @@ export default function App() {
           </div>
 
           <div>
-            <span>Jobs</span>
+            <span>Active Jobs</span>
             <strong>{sidebarStats.totalJobs}</strong>
           </div>
 
@@ -458,7 +512,7 @@ export default function App() {
           </div>
 
           <div>
-            <span>Jobs Value</span>
+            <span>Active Value</span>
             <strong>{money(sidebarStats.totalJobsValue)}</strong>
           </div>
         </div>

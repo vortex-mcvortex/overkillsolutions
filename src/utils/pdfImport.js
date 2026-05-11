@@ -70,6 +70,9 @@ function fallbackRecordFromText(text) {
       jobNumber: jobMatch?.[0]?.toUpperCase() || null,
       invoiceNumber: invoiceMatch?.[0]?.toUpperCase() || null,
       customerName: "Imported Customer",
+      customerPhone: "",
+      customerEmail: "",
+      customerAddress: "",
       jobName: "Imported PDF Record",
       finalTotal,
       depositAmount: 0,
@@ -83,6 +86,9 @@ function fallbackRecordFromText(text) {
       },
       formData: {
         customerName: "Imported Customer",
+        customerPhone: "",
+        customerEmail: "",
+        customerAddress: "",
         jobName: "Imported PDF Record",
         jobAspects: {
           cad: false,

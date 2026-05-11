@@ -22,7 +22,7 @@ function getPaymentStatus(job) {
   const paid = getPaidTotal(job);
 
   if (paid <= 0) return "Unpaid";
-  if (paid >= total) return paid > total ? "Overpaid" : "Paid in Full";
+  if (paid >= total) return paid > total ? "Overpaid" : "Paid";
   return "Partially Paid";
 }
 
@@ -36,38 +36,62 @@ function calculateJobActualCost(job) {
 }
 
 export default function DashboardPage({ quotes, jobs }) {
+  const activeJobs = jobs.filter((job) => !job.archived);
+  const archivedJobs = jobs.filter((job) => job.archived);
+
   const totalQuoteValue = quotes.reduce(
     (sum, quote) => sum + num(quote.finalTotal),
     0
   );
 
-  const totalJobValue = jobs.reduce(
+  const totalActiveJobValue = activeJobs.reduce(
     (sum, job) => sum + num(job.finalTotal),
     0
   );
 
-  const totalCollected = jobs.reduce(
+  const totalArchivedJobValue = archivedJobs.reduce(
+    (sum, job) => sum + num(job.finalTotal),
+    0
+  );
+
+  const totalCollected = activeJobs.reduce(
     (sum, job) => sum + getPaidTotal(job),
     0
   );
 
-  const outstandingBalance = jobs.reduce((sum, job) => {
+  const outstandingBalance = activeJobs.reduce((sum, job) => {
     return sum + Math.max(0, num(job.finalTotal) - getPaidTotal(job));
   }, 0);
 
-  const estimatedKnownCost = jobs.reduce(
+  const estimatedKnownCost = activeJobs.reduce(
     (sum, job) => sum + calculateJobActualCost(job),
     0
   );
 
-  const estimatedProfit = totalJobValue - estimatedKnownCost;
+  const estimatedProfit = totalActiveJobValue - estimatedKnownCost;
 
   const recentQuotes = [...quotes]
-    .sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt))
+    .sort(
+      (a, b) =>
+        new Date(b.updatedAt || b.createdAt) -
+        new Date(a.updatedAt || a.createdAt)
+    )
     .slice(0, 5);
 
-  const recentJobs = [...jobs]
-    .sort((a, b) => new Date(b.updatedAt || b.approvedAt) - new Date(a.updatedAt || a.approvedAt))
+  const recentActiveJobs = [...activeJobs]
+    .sort(
+      (a, b) =>
+        new Date(b.updatedAt || b.approvedAt) -
+        new Date(a.updatedAt || a.approvedAt)
+    )
+    .slice(0, 5);
+
+  const recentArchivedJobs = [...archivedJobs]
+    .sort(
+      (a, b) =>
+        new Date(b.archivedAt || b.updatedAt || b.approvedAt) -
+        new Date(a.archivedAt || a.updatedAt || a.approvedAt)
+    )
     .slice(0, 5);
 
   return (
@@ -76,7 +100,8 @@ export default function DashboardPage({ quotes, jobs }) {
         <div>
           <h2 className="section-title brand-font">Dashboard</h2>
           <p className="muted-text">
-            Business snapshot for quotes, jobs, payments, and profitability.
+            Business snapshot for active quotes, active jobs, archived jobs,
+            payments, and profitability.
           </p>
         </div>
       </div>
@@ -89,7 +114,12 @@ export default function DashboardPage({ quotes, jobs }) {
 
         <div className="dashboard-stat-card">
           <span>Active Jobs</span>
-          <strong>{jobs.length}</strong>
+          <strong>{activeJobs.length}</strong>
+        </div>
+
+        <div className="dashboard-stat-card">
+          <span>Archived Jobs</span>
+          <strong>{archivedJobs.length}</strong>
         </div>
 
         <div className="dashboard-stat-card">
@@ -98,8 +128,13 @@ export default function DashboardPage({ quotes, jobs }) {
         </div>
 
         <div className="dashboard-stat-card">
-          <span>Job Value</span>
-          <strong>{money(totalJobValue)}</strong>
+          <span>Active Job Value</span>
+          <strong>{money(totalActiveJobValue)}</strong>
+        </div>
+
+        <div className="dashboard-stat-card">
+          <span>Archived Value</span>
+          <strong>{money(totalArchivedJobValue)}</strong>
         </div>
 
         <div className="dashboard-stat-card">
@@ -145,19 +180,51 @@ export default function DashboardPage({ quotes, jobs }) {
         </div>
 
         <div className="form-card">
-          <h3 className="card-title">Recent Jobs</h3>
+          <h3 className="card-title">Recent Active Jobs</h3>
 
-          {recentJobs.length === 0 ? (
-            <p className="muted-text">No jobs yet.</p>
+          {recentActiveJobs.length === 0 ? (
+            <p className="muted-text">No active jobs yet.</p>
           ) : (
             <div className="dashboard-list">
-              {recentJobs.map((job) => (
+              {recentActiveJobs.map((job) => (
                 <div className="dashboard-list-row" key={job.id}>
                   <div>
                     <strong>{job.jobNumber}</strong>
                     <span>{job.jobName || "Untitled Job"}</span>
                   </div>
-                  <span className="status-pill">{getPaymentStatus(job)}</span>
+
+                  <div className="dashboard-status-stack">
+                    <span className="status-pill">{job.status || "Approved"}</span>
+                    <span className="status-pill">
+                      {getPaymentStatus(job)}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="form-card dashboard-full-span">
+          <h3 className="card-title">Recently Archived Jobs</h3>
+
+          {recentArchivedJobs.length === 0 ? (
+            <p className="muted-text">No archived jobs yet.</p>
+          ) : (
+            <div className="dashboard-list">
+              {recentArchivedJobs.map((job) => (
+                <div className="dashboard-list-row" key={job.id}>
+                  <div>
+                    <strong>{job.jobNumber}</strong>
+                    <span>{job.jobName || "Untitled Job"}</span>
+                  </div>
+
+                  <div className="dashboard-status-stack">
+                    <span className="status-pill">
+                      {job.status || "Archived"}
+                    </span>
+                    <span>{money(job.finalTotal)}</span>
+                  </div>
                 </div>
               ))}
             </div>

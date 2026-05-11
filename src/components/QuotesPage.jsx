@@ -103,9 +103,7 @@ export default function QuotesPage({
                 <div>
                   <span>Created</span>
                   <strong>
-                    {new Date(
-                      quote.createdAt
-                    ).toLocaleDateString()}
+                    {new Date(quote.createdAt).toLocaleDateString()}
                   </strong>
                 </div>
               </div>

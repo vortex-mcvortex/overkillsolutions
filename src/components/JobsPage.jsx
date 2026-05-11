@@ -1,8 +1,28 @@
-import { useRef } from "react";
-import { Plus, Trash2, Save, FileDown, Upload } from "lucide-react";
+import { useRef, useState } from "react";
+import {
+  Plus,
+  Trash2,
+  Save,
+  FileDown,
+  Upload,
+  ChevronDown,
+  Archive,
+  RotateCcw,
+} from "lucide-react";
 import { exportInvoicePdf } from "../utils/pdf";
 
 const PAYMENT_METHODS = ["Venmo", "Cash", "Cash App", "PayPal", "Zelle"];
+
+const JOB_STATUSES = [
+  "Approved",
+  "In Production",
+  "Waiting on Customer",
+  "Waiting on Material",
+  "Ready for Pickup",
+  "Ready to Ship",
+  "Completed",
+  "Cancelled",
+];
 
 const EVENT_TYPES = [
   "Machine Time",
@@ -26,6 +46,28 @@ function money(value) {
 function num(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function slug(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\s+/g, "-");
+}
+
+function getPaidTotal(job) {
+  return (job.paymentEvents || []).reduce((sum, payment) => {
+    if (payment.type === "Refund") return sum - num(payment.amount);
+    return sum + num(payment.amount);
+  }, 0);
+}
+
+function getPaymentStatus(job) {
+  const total = num(job.finalTotal);
+  const paid = getPaidTotal(job);
+
+  if (paid <= 0) return "Unpaid";
+  if (paid >= total) return paid > total ? "Overpaid" : "Paid";
+  return "Partially Paid";
 }
 
 function getEventDateTime(event) {
@@ -133,10 +175,8 @@ function buildMachineOptions(job) {
   return options;
 }
 
-function pairTimeEvents(events) {
-  const normalizedEvents = events.map(normalizeOldEvent);
-
-  const sorted = [...normalizedEvents].sort((a, b) => {
+function sortEventsOldestFirst(events) {
+  return [...events].sort((a, b) => {
     const aDate = getEventDateTime(a);
     const bDate = getEventDateTime(b);
 
@@ -146,7 +186,10 @@ function pairTimeEvents(events) {
 
     return aDate - bDate;
   });
+}
 
+function pairTimeEvents(events) {
+  const sorted = sortEventsOldestFirst(events.map(normalizeOldEvent));
   const openStarts = {};
   const paired = [];
 
@@ -186,10 +229,18 @@ function pairTimeEvents(events) {
 export default function JobsPage({
   jobs,
   onUpdateJob,
+  onArchiveJob,
+  onRestoreJob,
+  onDeleteJob,
   onImportPdf,
   importMessage,
 }) {
   const fileInputRef = useRef(null);
+  const [expandedJobId, setExpandedJobId] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
+
+  const activeJobs = jobs.filter((job) => !job.archived);
+  const archivedJobs = jobs.filter((job) => job.archived);
 
   function handleImportChange(event) {
     const file = event.target.files?.[0];
@@ -236,7 +287,7 @@ export default function JobsPage({
     if (!job) return;
 
     onUpdateJob(jobId, {
-      timeEvents: [createTimeEvent(), ...(job.timeEvents || [])],
+      timeEvents: [...(job.timeEvents || []), createTimeEvent()],
     });
   }
 
@@ -265,7 +316,6 @@ export default function JobsPage({
   function calculateJobActuals(job) {
     const actuals = job.actuals || {};
     const payments = job.payments || {};
-    const paymentEvents = job.paymentEvents || [];
     const timeEvents = job.timeEvents || [];
     const pairedEvents = pairTimeEvents(timeEvents);
 
@@ -296,12 +346,7 @@ export default function JobsPage({
       extraCost;
 
     const customerTotal = num(job.finalTotal);
-
-    const ledgerPaid = paymentEvents.reduce((sum, payment) => {
-      if (payment.type === "Refund") return sum - num(payment.amount);
-      return sum + num(payment.amount);
-    }, 0);
-
+    const ledgerPaid = getPaidTotal(job);
     const legacyPaid = num(payments.depositPaid) + num(payments.additionalPaid);
     const totalPaid = ledgerPaid || legacyPaid;
 
@@ -315,12 +360,6 @@ export default function JobsPage({
       machineHours,
       cadHours,
       laborHours,
-      materialCost,
-      machineCost,
-      cadCost,
-      laborCost,
-      failedPrintCost,
-      extraCost,
       totalActualCost,
       customerTotal,
       totalPaid,
@@ -330,13 +369,426 @@ export default function JobsPage({
     };
   }
 
+  function renderJobCard(job) {
+    const actuals = {
+      materialCost: 0,
+      failedPrintCost: 0,
+      extraCost: 0,
+      notes: "",
+      ...(job.actuals || {}),
+    };
+
+    const payments = {
+      depositPaid: 0,
+      additionalPaid: 0,
+      paymentMethod: "Venmo",
+      paymentNotes: "",
+      ...(job.payments || {}),
+    };
+
+    const timeEvents = sortEventsOldestFirst(
+      (job.timeEvents || []).map(normalizeOldEvent)
+    );
+    const machineOptions = buildMachineOptions(job);
+    const calc = calculateJobActuals({
+      ...job,
+      actuals,
+      payments,
+      timeEvents,
+    });
+
+    const isExpanded = expandedJobId === job.id;
+    const paymentStatus = getPaymentStatus(job);
+
+    return (
+      <article
+        className={`job-detail-card expandable-job-card ${isExpanded ? "expanded" : ""} ${
+          job.archived ? "archived-job-card" : ""
+        }`}
+        key={job.id}
+      >
+        <button
+          className="job-list-header"
+          type="button"
+          onClick={() => setExpandedJobId(isExpanded ? "" : job.id)}
+        >
+          <div className="job-list-main">
+            <strong>{job.jobNumber}</strong>
+            <span>{job.customerName || "No Customer Name"}</span>
+            <small>{job.jobName || "Untitled Job"}</small>
+          </div>
+
+          <div className="job-list-meta">
+            {job.archived && <span className="archive-pill">Archived</span>}
+
+            <span className={`payment-status-pill payment-${slug(paymentStatus)}`}>
+              {paymentStatus}
+            </span>
+
+            <span className={`job-status-button status-${slug(job.status || "Approved")}`}>
+              {job.status || "Approved"}
+            </span>
+
+            <strong>{money(job.finalTotal)}</strong>
+
+            <ChevronDown
+              size={20}
+              className={`job-expand-icon ${isExpanded ? "open" : ""}`}
+            />
+          </div>
+        </button>
+
+        {isExpanded && (
+          <div className="job-expanded-body">
+            <div className="record-card-top">
+              <div>
+                <h3>{job.jobNumber}</h3>
+                <p>{job.customerName || "No Customer Name"}</p>
+              </div>
+
+              <div className="job-status-control-group">
+                <span className={`payment-status-pill payment-${slug(paymentStatus)}`}>
+                  {paymentStatus}
+                </span>
+
+                <label className="field compact-status-field">
+                  <select
+                    className={`status-pill status-${slug(job.status || "Approved")}`}
+                    value={job.status || "Approved"}
+                    onChange={(event) =>
+                      onUpdateJob(job.id, {
+                        status: event.target.value,
+                      })
+                    }
+                  >
+                    {JOB_STATUSES.map((status) => (
+                      <option key={status} value={status}>
+                        {status}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            <div className="record-title">{job.jobName || "Untitled Job"}</div>
+
+            <div className="record-tags">
+              {job.jobAspects?.cad && <span>CAD</span>}
+              {job.jobAspects?.printing && <span>3D Printing</span>}
+              {job.jobAspects?.engraving && <span>Engraving</span>}
+              {job.jobAspects?.vinyl && <span>Vinyl</span>}
+              {job.jobAspects?.custom && <span>Custom</span>}
+              {job.importedFromPdf && <span>Imported PDF</span>}
+              {job.archived && <span>Archived</span>}
+            </div>
+
+            <div className="record-button-row job-action-row">
+              <button
+                className="primary-button record-action"
+                onClick={() => saveJob(job.id)}
+              >
+                <Save size={18} />
+                Save Job Changes
+              </button>
+
+              <button
+                className="secondary-button record-action"
+                onClick={() => exportInvoicePdf(job)}
+              >
+                <FileDown size={18} />
+                Export Invoice PDF
+              </button>
+
+              {!job.archived ? (
+                <button
+                  className="secondary-button record-action"
+                  onClick={() => onArchiveJob(job.id)}
+                >
+                  <Archive size={18} />
+                  Archive Job
+                </button>
+              ) : (
+                <button
+                  className="secondary-button record-action"
+                  onClick={() => onRestoreJob(job.id)}
+                >
+                  <RotateCcw size={18} />
+                  Restore Job
+                </button>
+              )}
+
+              <button
+                className="secondary-button danger-button record-action"
+                onClick={() => onDeleteJob(job.id)}
+              >
+                <Trash2 size={18} />
+                Delete Job
+              </button>
+            </div>
+
+            {job.lastSavedAt && (
+              <p className="helper-note">
+                Last saved: {new Date(job.lastSavedAt).toLocaleString()}
+              </p>
+            )}
+
+            {job.archivedAt && (
+              <p className="helper-note">
+                Archived: {new Date(job.archivedAt).toLocaleString()}
+              </p>
+            )}
+
+            <div className="job-summary-grid">
+              <div><span>Quoted Total</span><strong>{money(job.finalTotal)}</strong></div>
+              <div><span>Actual Cost</span><strong>{money(calc.totalActualCost)}</strong></div>
+              <div><span>Estimated Profit</span><strong>{money(calc.estimatedProfit)}</strong></div>
+              <div><span>Profit Margin</span><strong>{calc.profitMargin.toFixed(1)}%</strong></div>
+              <div><span>Machine Hours</span><strong>{calc.machineHours.toFixed(2)}</strong></div>
+              <div><span>CAD Hours</span><strong>{calc.cadHours.toFixed(2)}</strong></div>
+              <div><span>Total Paid</span><strong>{money(calc.totalPaid)}</strong></div>
+              <div><span>Remaining</span><strong>{money(calc.remainingToCollect)}</strong></div>
+            </div>
+
+            <div className="form-card">
+              <div className="page-heading-row">
+                <div>
+                  <h3 className="card-title">Production Log</h3>
+                  <p className="muted-text">
+                    Oldest saved log stays Event 1. Newer logs get higher event numbers.
+                  </p>
+                </div>
+
+                <button
+                  className="secondary-button"
+                  onClick={() => addTimeEvent(job.id)}
+                >
+                  <Plus size={18} />
+                  Add Event
+                </button>
+              </div>
+
+              <div className="vinyl-lines">
+                {timeEvents.length === 0 ? (
+                  <p className="muted-text">No production events yet.</p>
+                ) : (
+                  timeEvents.map((event, index) => (
+                    <div className="vinyl-line" key={event.id}>
+                      <div className="vinyl-line-header">
+                        <strong>Event {index + 1}</strong>
+                        <span>{event.action}</span>
+                      </div>
+
+                      <div className="form-grid">
+                        <label className="field">
+                          <span>Type</span>
+                          <select
+                            value={event.type}
+                            onChange={(change) =>
+                              updateTimeEvent(job.id, event.id, "type", change.target.value)
+                            }
+                          >
+                            {EVENT_TYPES.map((type) => (
+                              <option key={type} value={type}>{type}</option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label className="field">
+                          <span>Action</span>
+                          <select
+                            value={event.action}
+                            onChange={(change) =>
+                              updateTimeEvent(job.id, event.id, "action", change.target.value)
+                            }
+                          >
+                            {EVENT_ACTIONS.map((action) => (
+                              <option key={action} value={action}>{action}</option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <Field
+                          label="Date"
+                          type="date"
+                          value={event.date}
+                          onChange={(value) =>
+                            updateTimeEvent(job.id, event.id, "date", value)
+                          }
+                        />
+
+                        <Field
+                          label="Time"
+                          type="time"
+                          value={event.time}
+                          onChange={(value) =>
+                            updateTimeEvent(job.id, event.id, "time", value)
+                          }
+                        />
+
+                        <label className="field">
+                          <span>Machine / Task</span>
+                          <select
+                            value={event.label}
+                            onChange={(change) =>
+                              updateTimeEvent(job.id, event.id, "label", change.target.value)
+                            }
+                          >
+                            {machineOptions.map((option) => (
+                              <option key={option.value || "general"} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <Field
+                          label="Rate ($/hr)"
+                          value={event.rate}
+                          onChange={(value) =>
+                            updateTimeEvent(job.id, event.id, "rate", value)
+                          }
+                        />
+
+                        <button
+                          className="secondary-button danger-button"
+                          onClick={() => removeTimeEvent(job.id, event.id)}
+                          type="button"
+                        >
+                          <Trash2 size={18} />
+                          Remove
+                        </button>
+                      </div>
+
+                      <label className="field single-row-gap">
+                        <span>Notes</span>
+                        <textarea
+                          value={event.notes}
+                          onChange={(change) =>
+                            updateTimeEvent(job.id, event.id, "notes", change.target.value)
+                          }
+                          placeholder="P1S started, H2S laser stopped, CAD revision started, customer requested change, etc."
+                        />
+                      </label>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="form-card single-row-gap">
+              <h3 className="card-title">Calculated Time Pairs</h3>
+
+              {calc.pairedEvents.length === 0 ? (
+                <p className="muted-text">No completed start/stop pairs yet.</p>
+              ) : (
+                <div className="breakdown-list">
+                  {calc.pairedEvents.map((pair, index) => (
+                    <div key={`${pair.key}-${index}`}>
+                      <span>{pair.type} — {pair.label}</span>
+                      <strong>{pair.hours.toFixed(2)} hr / {money(pair.cost)}</strong>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="job-sections-grid single-row-gap">
+              <div className="form-card">
+                <h3 className="card-title">Actual Extra Costs</h3>
+
+                <div className="form-grid">
+                  <Field
+                    label="Actual Material Cost"
+                    value={actuals.materialCost}
+                    onChange={(value) => updateActual(job.id, "materialCost", value)}
+                  />
+
+                  <Field
+                    label="Failed Print / Waste Cost"
+                    value={actuals.failedPrintCost}
+                    onChange={(value) => updateActual(job.id, "failedPrintCost", value)}
+                  />
+
+                  <Field
+                    label="Extra Costs"
+                    value={actuals.extraCost}
+                    onChange={(value) => updateActual(job.id, "extraCost", value)}
+                  />
+                </div>
+
+                <label className="field single-row-gap">
+                  <span>Actual Notes</span>
+                  <textarea
+                    value={actuals.notes}
+                    onChange={(event) =>
+                      updateActual(job.id, "notes", event.target.value)
+                    }
+                    placeholder="Failed prints, support cleanup, material changes, customer changes, etc."
+                  />
+                </label>
+              </div>
+
+              <div className="form-card">
+                <h3 className="card-title">Legacy Quick Payments</h3>
+
+                <div className="form-grid">
+                  <Field
+                    label="Deposit Paid"
+                    value={payments.depositPaid}
+                    onChange={(value) => updatePayment(job.id, "depositPaid", value)}
+                  />
+
+                  <Field
+                    label="Additional Paid"
+                    value={payments.additionalPaid}
+                    onChange={(value) => updatePayment(job.id, "additionalPaid", value)}
+                  />
+
+                  <label className="field">
+                    <span>Payment Method</span>
+                    <select
+                      value={payments.paymentMethod}
+                      onChange={(event) =>
+                        updatePayment(job.id, "paymentMethod", event.target.value)
+                      }
+                    >
+                      {PAYMENT_METHODS.map((method) => (
+                        <option key={method} value={method}>{method}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                <label className="field single-row-gap">
+                  <span>Payment Notes</span>
+                  <textarea
+                    value={payments.paymentNotes}
+                    onChange={(event) =>
+                      updatePayment(job.id, "paymentNotes", event.target.value)
+                    }
+                    placeholder="Main payment tracking now lives in the Payments tab."
+                  />
+                </label>
+
+                <p className="helper-note">
+                  Main payment ledger is in the Payments tab. These fields are kept for older jobs and quick notes.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+      </article>
+    );
+  }
+
   return (
     <section className="page-panel">
       <div className="page-heading-row">
         <div>
           <h2 className="section-title brand-font">Jobs</h2>
           <p className="muted-text">
-            Approved work with editable timestamp logs, actual costs, payments, and profit estimates.
+            Active work queue with expandable production logs, archiving, costs, payments, and status tracking.
           </p>
 
           {importMessage && <p className="helper-note">{importMessage}</p>}
@@ -362,328 +814,63 @@ export default function JobsPage({
         </div>
       </div>
 
-      {jobs.length === 0 ? (
+      <div className="job-queue-summary">
+        <div>
+          <span>Active Jobs</span>
+          <strong>{activeJobs.length}</strong>
+        </div>
+
+        <div>
+          <span>Archived Jobs</span>
+          <strong>{archivedJobs.length}</strong>
+        </div>
+
+        <div>
+          <span>Active Value</span>
+          <strong>
+            {money(activeJobs.reduce((sum, job) => sum + num(job.finalTotal), 0))}
+          </strong>
+        </div>
+      </div>
+
+      {activeJobs.length === 0 ? (
         <div className="empty-state">
           <h3>No active jobs yet.</h3>
           <p>Convert an approved quote into a job to begin production tracking.</p>
         </div>
       ) : (
         <div className="jobs-stack">
-          {jobs.map((job) => {
-            const actuals = {
-              materialCost: 0,
-              failedPrintCost: 0,
-              extraCost: 0,
-              notes: "",
-              ...(job.actuals || {}),
-            };
-
-            const payments = {
-              depositPaid: 0,
-              additionalPaid: 0,
-              paymentMethod: "Venmo",
-              paymentNotes: "",
-              ...(job.payments || {}),
-            };
-
-            const timeEvents = (job.timeEvents || []).map(normalizeOldEvent);
-            const machineOptions = buildMachineOptions(job);
-
-            const calc = calculateJobActuals({
-              ...job,
-              actuals,
-              payments,
-              timeEvents,
-            });
-
-            return (
-              <article className="job-detail-card" key={job.id}>
-                <div className="record-card-top">
-                  <div>
-                    <h3>{job.jobNumber}</h3>
-                    <p>{job.customerName || "No Customer Name"}</p>
-                  </div>
-
-                  <span className="status-pill">{job.status}</span>
-                </div>
-
-                <div className="record-title">{job.jobName || "Untitled Job"}</div>
-
-                <div className="record-tags">
-                  {job.jobAspects?.cad && <span>CAD</span>}
-                  {job.jobAspects?.printing && <span>3D Printing</span>}
-                  {job.jobAspects?.engraving && <span>Engraving</span>}
-                  {job.jobAspects?.vinyl && <span>Vinyl</span>}
-                  {job.jobAspects?.custom && <span>Custom</span>}
-                  {job.importedFromPdf && <span>Imported PDF</span>}
-                </div>
-
-                <div className="record-button-row">
-                  <button
-                    className="primary-button record-action"
-                    onClick={() => saveJob(job.id)}
-                  >
-                    <Save size={18} />
-                    Save Job Changes
-                  </button>
-
-                  <button
-                    className="secondary-button record-action"
-                    onClick={() => exportInvoicePdf(job)}
-                  >
-                    <FileDown size={18} />
-                    Export Invoice PDF
-                  </button>
-                </div>
-
-                {job.lastSavedAt && (
-                  <p className="helper-note">
-                    Last saved: {new Date(job.lastSavedAt).toLocaleString()}
-                  </p>
-                )}
-
-                <div className="job-summary-grid">
-                  <div><span>Quoted Total</span><strong>{money(job.finalTotal)}</strong></div>
-                  <div><span>Actual Cost</span><strong>{money(calc.totalActualCost)}</strong></div>
-                  <div><span>Estimated Profit</span><strong>{money(calc.estimatedProfit)}</strong></div>
-                  <div><span>Profit Margin</span><strong>{calc.profitMargin.toFixed(1)}%</strong></div>
-                  <div><span>Machine Hours</span><strong>{calc.machineHours.toFixed(2)}</strong></div>
-                  <div><span>CAD Hours</span><strong>{calc.cadHours.toFixed(2)}</strong></div>
-                  <div><span>Total Paid</span><strong>{money(calc.totalPaid)}</strong></div>
-                  <div><span>Remaining</span><strong>{money(calc.remainingToCollect)}</strong></div>
-                </div>
-
-                <div className="form-card">
-                  <div className="page-heading-row">
-                    <div>
-                      <h3 className="card-title">Production Log</h3>
-                      <p className="muted-text">
-                        Add one editable event at a time: date, time, type, action, and machine/task.
-                      </p>
-                    </div>
-
-                    <button
-                      className="secondary-button"
-                      onClick={() => addTimeEvent(job.id)}
-                    >
-                      <Plus size={18} />
-                      Add Event
-                    </button>
-                  </div>
-
-                  <div className="vinyl-lines">
-                    {timeEvents.length === 0 ? (
-                      <p className="muted-text">No production events yet.</p>
-                    ) : (
-                      timeEvents.map((event, index) => (
-                        <div className="vinyl-line" key={event.id}>
-                          <div className="vinyl-line-header">
-                            <strong>Event {index + 1}</strong>
-                            <span>{event.action}</span>
-                          </div>
-
-                          <div className="form-grid">
-                            <label className="field">
-                              <span>Type</span>
-                              <select
-                                value={event.type}
-                                onChange={(change) =>
-                                  updateTimeEvent(job.id, event.id, "type", change.target.value)
-                                }
-                              >
-                                {EVENT_TYPES.map((type) => (
-                                  <option key={type} value={type}>{type}</option>
-                                ))}
-                              </select>
-                            </label>
-
-                            <label className="field">
-                              <span>Action</span>
-                              <select
-                                value={event.action}
-                                onChange={(change) =>
-                                  updateTimeEvent(job.id, event.id, "action", change.target.value)
-                                }
-                              >
-                                {EVENT_ACTIONS.map((action) => (
-                                  <option key={action} value={action}>{action}</option>
-                                ))}
-                              </select>
-                            </label>
-
-                            <Field
-                              label="Date"
-                              type="date"
-                              value={event.date}
-                              onChange={(value) =>
-                                updateTimeEvent(job.id, event.id, "date", value)
-                              }
-                            />
-
-                            <Field
-                              label="Time"
-                              type="time"
-                              value={event.time}
-                              onChange={(value) =>
-                                updateTimeEvent(job.id, event.id, "time", value)
-                              }
-                            />
-
-                            <label className="field">
-                              <span>Machine / Task</span>
-                              <select
-                                value={event.label}
-                                onChange={(change) =>
-                                  updateTimeEvent(job.id, event.id, "label", change.target.value)
-                                }
-                              >
-                                {machineOptions.map((option) => (
-                                  <option key={option.value || "general"} value={option.value}>
-                                    {option.label}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-
-                            <Field
-                              label="Rate ($/hr)"
-                              value={event.rate}
-                              onChange={(value) =>
-                                updateTimeEvent(job.id, event.id, "rate", value)
-                              }
-                            />
-
-                            <button
-                              className="secondary-button danger-button"
-                              onClick={() => removeTimeEvent(job.id, event.id)}
-                              type="button"
-                            >
-                              <Trash2 size={18} />
-                              Remove
-                            </button>
-                          </div>
-
-                          <label className="field single-row-gap">
-                            <span>Notes</span>
-                            <textarea
-                              value={event.notes}
-                              onChange={(change) =>
-                                updateTimeEvent(job.id, event.id, "notes", change.target.value)
-                              }
-                              placeholder="P1S started, H2S laser stopped, CAD revision started, customer requested change, etc."
-                            />
-                          </label>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-
-                <div className="form-card single-row-gap">
-                  <h3 className="card-title">Calculated Time Pairs</h3>
-
-                  {calc.pairedEvents.length === 0 ? (
-                    <p className="muted-text">No completed start/stop pairs yet.</p>
-                  ) : (
-                    <div className="breakdown-list">
-                      {calc.pairedEvents.map((pair, index) => (
-                        <div key={`${pair.key}-${index}`}>
-                          <span>{pair.type} — {pair.label}</span>
-                          <strong>{pair.hours.toFixed(2)} hr / {money(pair.cost)}</strong>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div className="job-sections-grid single-row-gap">
-                  <div className="form-card">
-                    <h3 className="card-title">Actual Extra Costs</h3>
-
-                    <div className="form-grid">
-                      <Field
-                        label="Actual Material Cost"
-                        value={actuals.materialCost}
-                        onChange={(value) => updateActual(job.id, "materialCost", value)}
-                      />
-
-                      <Field
-                        label="Failed Print / Waste Cost"
-                        value={actuals.failedPrintCost}
-                        onChange={(value) => updateActual(job.id, "failedPrintCost", value)}
-                      />
-
-                      <Field
-                        label="Extra Costs"
-                        value={actuals.extraCost}
-                        onChange={(value) => updateActual(job.id, "extraCost", value)}
-                      />
-                    </div>
-
-                    <label className="field single-row-gap">
-                      <span>Actual Notes</span>
-                      <textarea
-                        value={actuals.notes}
-                        onChange={(event) =>
-                          updateActual(job.id, "notes", event.target.value)
-                        }
-                        placeholder="Failed prints, support cleanup, material changes, customer changes, etc."
-                      />
-                    </label>
-                  </div>
-
-                  <div className="form-card">
-                    <h3 className="card-title">Legacy Quick Payments</h3>
-
-                    <div className="form-grid">
-                      <Field
-                        label="Deposit Paid"
-                        value={payments.depositPaid}
-                        onChange={(value) => updatePayment(job.id, "depositPaid", value)}
-                      />
-
-                      <Field
-                        label="Additional Paid"
-                        value={payments.additionalPaid}
-                        onChange={(value) => updatePayment(job.id, "additionalPaid", value)}
-                      />
-
-                      <label className="field">
-                        <span>Payment Method</span>
-                        <select
-                          value={payments.paymentMethod}
-                          onChange={(event) =>
-                            updatePayment(job.id, "paymentMethod", event.target.value)
-                          }
-                        >
-                          {PAYMENT_METHODS.map((method) => (
-                            <option key={method} value={method}>{method}</option>
-                          ))}
-                        </select>
-                      </label>
-                    </div>
-
-                    <label className="field single-row-gap">
-                      <span>Payment Notes</span>
-                      <textarea
-                        value={payments.paymentNotes}
-                        onChange={(event) =>
-                          updatePayment(job.id, "paymentNotes", event.target.value)
-                        }
-                        placeholder="Main payment tracking now lives in the Payments tab."
-                      />
-                    </label>
-
-                    <p className="helper-note">
-                      Main payment ledger is in the Payments tab. These fields are kept for older jobs and quick notes.
-                    </p>
-                  </div>
-                </div>
-              </article>
-            );
-          })}
+          <h3 className="card-title">Active Jobs</h3>
+          {activeJobs.map(renderJobCard)}
         </div>
       )}
+
+      <div className="archived-jobs-section">
+        <button
+          className="secondary-button archive-toggle-button"
+          type="button"
+          onClick={() => setShowArchived(!showArchived)}
+        >
+          <Archive size={18} />
+          {showArchived ? "Hide Archived Jobs" : `Show Archived Jobs (${archivedJobs.length})`}
+        </button>
+
+        {showArchived && (
+          <div className="jobs-stack single-row-gap">
+            {archivedJobs.length === 0 ? (
+              <div className="empty-state">
+                <h3>No archived jobs.</h3>
+                <p>Completed or cancelled jobs will appear here after archiving.</p>
+              </div>
+            ) : (
+              <>
+                <h3 className="card-title">Archived Jobs</h3>
+                {archivedJobs.map(renderJobCard)}
+              </>
+            )}
+          </div>
+        )}
+      </div>
     </section>
   );
 }

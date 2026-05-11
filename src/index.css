@@ -856,3 +856,252 @@ textarea {
     grid-template-columns: 1fr;
   }
 }
+.settings-checkbox-list {
+  display: grid;
+  gap: 10px;
+}
+.compact-status-field {
+  min-width: 210px;
+}
+
+.compact-status-field select {
+  cursor: pointer;
+  border: none;
+  outline: none;
+}
+
+.status-approved {
+  background: rgba(214, 40, 40, 0.18);
+  color: #ffb3b3;
+}
+
+.status-in-production {
+  background: rgba(255, 165, 0, 0.18);
+  color: #ffd27a;
+}
+
+.status-waiting-on-customer {
+  background: rgba(70, 130, 180, 0.18);
+  color: #9fd0ff;
+}
+
+.status-waiting-on-material {
+  background: rgba(138, 43, 226, 0.18);
+  color: #d3b2ff;
+}
+
+.status-ready-for-pickup {
+  background: rgba(46, 204, 113, 0.18);
+  color: #8dffba;
+}
+
+.status-ready-to-ship {
+  background: rgba(0, 206, 209, 0.18);
+  color: #9dffff;
+}
+
+.status-completed {
+  background: rgba(120, 120, 120, 0.2);
+  color: #d8d8d8;
+}
+
+.status-cancelled {
+  background: rgba(255, 0, 0, 0.16);
+  color: #ff8e8e;
+}
+.expandable-job-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.job-list-header {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: center;
+  background: rgba(5, 5, 5, 0.55);
+  border: none;
+  color: var(--color-silver);
+  padding: 16px 18px;
+  text-align: left;
+}
+
+.job-list-header:hover {
+  background: rgba(214, 40, 40, 0.08);
+}
+
+.job-list-main {
+  display: grid;
+  gap: 4px;
+}
+
+.job-list-main strong {
+  color: var(--color-red);
+  font-size: 1.2rem;
+}
+
+.job-list-main span {
+  color: var(--color-silver);
+  font-weight: 800;
+}
+
+.job-list-main small {
+  color: var(--color-gray);
+}
+
+.job-list-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.job-list-meta strong {
+  color: var(--color-silver);
+}
+
+.job-expanded-body {
+  border-top: 1px solid var(--color-border);
+  padding: 18px;
+}
+
+.job-expand-icon {
+  color: var(--color-gray);
+  transition: transform 0.15s ease;
+}
+
+.job-expand-icon.open {
+  transform: rotate(180deg);
+}
+
+.job-status-control-group {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.job-status-button,
+.payment-status-pill {
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  padding: 8px 11px;
+  font-size: 0.8rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.payment-unpaid {
+  background: rgba(255, 0, 0, 0.12);
+  color: #ff8e8e;
+}
+
+.payment-partially-paid {
+  background: rgba(255, 165, 0, 0.15);
+  color: #ffd27a;
+}
+
+.payment-paid {
+  background: rgba(46, 204, 113, 0.15);
+  color: #8dffba;
+}
+
+.payment-overpaid {
+  background: rgba(0, 206, 209, 0.16);
+  color: #9dffff;
+}
+
+@media (max-width: 850px) {
+  .job-list-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .job-list-meta {
+    justify-content: flex-start;
+  }
+}
+.job-action-row {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.job-queue-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 14px;
+  margin-bottom: 22px;
+}
+
+.job-queue-summary div {
+  background: rgba(5, 5, 5, 0.65);
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius);
+  padding: 14px;
+}
+
+.job-queue-summary span {
+  display: block;
+  color: var(--color-gray);
+  font-size: 0.85rem;
+  margin-bottom: 6px;
+}
+
+.job-queue-summary strong {
+  color: var(--color-silver);
+  font-size: 1.25rem;
+}
+
+.archived-jobs-section {
+  margin-top: 22px;
+  border-top: 1px solid var(--color-border);
+  padding-top: 18px;
+}
+
+.archive-toggle-button {
+  width: 100%;
+}
+
+.archive-pill {
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: rgba(120, 120, 120, 0.18);
+  color: var(--color-silver);
+  padding: 8px 11px;
+  font-size: 0.8rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.archived-job-card {
+  opacity: 0.82;
+}
+
+.archived-job-card .job-list-header {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+@media (max-width: 900px) {
+  .job-action-row {
+    grid-template-columns: 1fr;
+  }
+}
+.dashboard-full-span {
+  grid-column: 1 / -1;
+}
+
+.dashboard-status-stack {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 700px) {
+  .dashboard-status-stack {
+    justify-content: flex-start;
+  }
+}
