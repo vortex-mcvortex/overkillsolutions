@@ -7,6 +7,7 @@ import {
   Settings,
   CreditCard,
   Users,
+  Truck,
 } from "lucide-react";
 
 import CalculatorPage from "./components/CalculatorPage";
@@ -16,6 +17,7 @@ import PaymentsPage from "./components/PaymentsPage";
 import DashboardPage from "./components/DashboardPage";
 import SettingsPage from "./components/SettingsPage";
 import CustomersPage from "./components/CustomersPage";
+import ShippingPage from "./components/ShippingPage";
 import { importOverkillPdf } from "./utils/pdfImport";
 
 import overkillLogo from "./assets/logos/overkill_main.png";
@@ -28,6 +30,7 @@ const NAV_ITEMS = [
   { id: "jobs", label: "Jobs", icon: Hammer },
   { id: "payments", label: "Payments", icon: CreditCard },
   { id: "customers", label: "Customers", icon: Users },
+  { id: "shipping", label: "Shipping", icon: Truck },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 
@@ -36,6 +39,11 @@ function money(value) {
     style: "currency",
     currency: "USD",
   });
+}
+
+function num(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function getInitialState(key, fallback) {
@@ -62,10 +70,42 @@ function normalizeImportedAspects(record) {
   };
 }
 
+function applyShippingToRecord(record, shippingEstimate) {
+  const oldShipping = num(record.shippingEstimate?.total || record.formData?.shippingFee);
+  const newShipping = num(shippingEstimate.total);
+  const delta = newShipping - oldShipping;
+
+  const finalTotal = Math.max(0, num(record.finalTotal) + delta);
+  const depositAmount = num(record.depositAmount);
+  const remainingBalance = Math.max(0, finalTotal - depositAmount);
+
+  return {
+    ...record,
+    finalTotal,
+    remainingBalance,
+    shippingEstimate,
+    formData: {
+      ...(record.formData || {}),
+      shippingFee: newShipping,
+      shippingEstimateId: shippingEstimate.id,
+    },
+    totals: {
+      ...(record.totals || {}),
+      shippingFee: newShipping,
+      finalTotal,
+      remainingBalance,
+    },
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 export default function App() {
   const [activePage, setActivePage] = useState("dashboard");
   const [quotes, setQuotes] = useState(() => getInitialState("overkill_quotes", []));
   const [jobs, setJobs] = useState(() => getInitialState("overkill_jobs", []));
+  const [shippingEstimates, setShippingEstimates] = useState(() =>
+    getInitialState("overkill_shipping_estimates", [])
+  );
   const [customerOverrides, setCustomerOverrides] = useState(() =>
     getInitialState("overkill_customer_overrides", {})
   );
@@ -85,6 +125,101 @@ export default function App() {
     localStorage.setItem("overkill_quotes", JSON.stringify(nextQuotes));
     localStorage.setItem("overkill_jobs", JSON.stringify(nextJobs));
     localStorage.setItem("overkill_used_record_numbers", JSON.stringify(nextUsedNumbers));
+  }
+
+  function saveShippingEstimates(nextEstimates) {
+    setShippingEstimates(nextEstimates);
+    localStorage.setItem("overkill_shipping_estimates", JSON.stringify(nextEstimates));
+  }
+
+  function addShippingEstimate(estimateData) {
+    const newEstimate = {
+      id: crypto.randomUUID(),
+      estimateNumber: `SHIP-${String(shippingEstimates.length + 1).padStart(4, "0")}`,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      status: "Estimate",
+      ...estimateData,
+    };
+
+    saveShippingEstimates([newEstimate, ...shippingEstimates]);
+  }
+
+  function updateShippingEstimate(estimateId, estimateData) {
+    const nextEstimates = shippingEstimates.map((estimate) =>
+      estimate.id === estimateId
+        ? {
+            ...estimate,
+            ...estimateData,
+            updatedAt: new Date().toISOString(),
+          }
+        : estimate
+    );
+
+    saveShippingEstimates(nextEstimates);
+  }
+
+  function deleteShippingEstimate(estimateId) {
+    const estimate = shippingEstimates.find((item) => item.id === estimateId);
+    if (!estimate) return;
+
+    const confirmed = window.confirm(
+      `Delete ${estimate.estimateNumber || "this shipping estimate"}?`
+    );
+
+    if (!confirmed) return;
+
+    saveShippingEstimates(shippingEstimates.filter((item) => item.id !== estimateId));
+  }
+
+  function attachShippingToQuote(estimateId, quoteId) {
+    const estimate = shippingEstimates.find((item) => item.id === estimateId);
+    if (!estimate) return;
+
+    const nextQuotes = quotes.map((quote) =>
+      quote.id === quoteId ? applyShippingToRecord(quote, estimate) : quote
+    );
+
+    const nextEstimates = shippingEstimates.map((item) =>
+      item.id === estimateId
+        ? {
+            ...item,
+            attachedType: "quote",
+            attachedId: quoteId,
+            attachedAt: new Date().toISOString(),
+            status: "Attached",
+          }
+        : item
+    );
+
+    setQuotes(nextQuotes);
+    saveShippingEstimates(nextEstimates);
+    saveToStorage(nextQuotes, jobs, usedRecordNumbers);
+  }
+
+  function attachShippingToJob(estimateId, jobId) {
+    const estimate = shippingEstimates.find((item) => item.id === estimateId);
+    if (!estimate) return;
+
+    const nextJobs = jobs.map((job) =>
+      job.id === jobId ? applyShippingToRecord(job, estimate) : job
+    );
+
+    const nextEstimates = shippingEstimates.map((item) =>
+      item.id === estimateId
+        ? {
+            ...item,
+            attachedType: "job",
+            attachedId: jobId,
+            attachedAt: new Date().toISOString(),
+            status: "Attached",
+          }
+        : item
+    );
+
+    setJobs(nextJobs);
+    saveShippingEstimates(nextEstimates);
+    saveToStorage(quotes, nextJobs, usedRecordNumbers);
   }
 
   function saveCustomerOverrides(nextOverrides) {
@@ -235,7 +370,6 @@ export default function App() {
     );
 
     const nextQuotes = quotes.filter((item) => item.id !== quoteId);
-
     let nextUsedNumbers = usedRecordNumbers;
 
     if (shouldReuseNumber && quote.recordNumber) {
@@ -371,6 +505,7 @@ export default function App() {
       importedAt: null,
       importedFromPdf: false,
       lastSavedAt: null,
+      shippingEstimate: null,
       actuals: {
         materialCost: 0,
         failedPrintCost: 0,
@@ -610,6 +745,18 @@ export default function App() {
         onDeleteManualCustomer={deleteManualCustomer}
       />
     ),
+    shipping: (
+      <ShippingPage
+        quotes={quotes}
+        jobs={jobs}
+        shippingEstimates={shippingEstimates}
+        onAddEstimate={addShippingEstimate}
+        onUpdateEstimate={updateShippingEstimate}
+        onDeleteEstimate={deleteShippingEstimate}
+        onAttachToQuote={attachShippingToQuote}
+        onAttachToJob={attachShippingToJob}
+      />
+    ),
     settings: <SettingsPage />,
   };
 
@@ -676,7 +823,7 @@ export default function App() {
           <div>
             <h1 className="brand-font app-title">INTERNAL PRODUCTION SYSTEM</h1>
             <p className="muted-text">
-              Quotes, jobs, time tracking, invoices, and profitability.
+              Quotes, jobs, time tracking, invoices, shipping, and profitability.
             </p>
           </div>
         </header>

@@ -56,7 +56,6 @@ function addEmbeddedData(doc, payload) {
   const encoded = encodeBase64Unicode(payload);
   const fullText = `${START_MARKER}${encoded}${END_MARKER}`;
   const chunks = fullText.match(/.{1,90}/g) || [];
-
   const originalPage = doc.internal.getCurrentPageInfo().pageNumber;
 
   doc.addPage();
@@ -110,7 +109,6 @@ function addFooter(doc) {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8);
   doc.setTextColor(120, 120, 120);
-
   doc.text("Overkill Solutions", PAGE.left, pageHeight - 11);
 
   doc.text(
@@ -425,12 +423,40 @@ function addInternalSignoffSection(doc, y, documentTitle, numberText) {
   return doc.lastAutoTable.finalY + 10;
 }
 
+function getShippingEstimate(record) {
+  return record.shippingEstimate || record.formData?.shippingEstimate || null;
+}
+
+function buildShippingRows(record) {
+  const shipping = getShippingEstimate(record);
+
+  if (!shipping) return [];
+
+  return [
+    ["Shipping Carrier", `${shipping.carrier || "N/A"} — ${shipping.service || "N/A"}`],
+    [
+      "Package",
+      `${shipping.packagePreset || "Custom"} / ${shipping.length || 0} x ${
+        shipping.width || 0
+      } x ${shipping.height || 0} in / ${shipping.billableWeight || 0} lb billable`,
+    ],
+    ["Carrier Quote", money(shipping.quotedShipping || 0)],
+    ["Packaging / Handling", money(num(shipping.packageCost) + num(shipping.packingMaterialCost) + num(shipping.handlingFee))],
+    ["Insurance / Signature", money(num(shipping.insurance) + num(shipping.signatureConfirmation))],
+    ["Shipping Add-On", money(shipping.total || 0)],
+    ["Shipping Notes", shipping.notes || "None"],
+  ];
+}
+
 function applyBufferToQuoteRows(totals, form, record) {
   const bufferMultiplier = 1 + num(totals.appliedBufferPercent) / 100;
   const buffered = (value) => money(num(value) * bufferMultiplier);
 
+  const shippingFromEstimate = num(record.shippingEstimate?.total);
   const finishingOther =
-    num(form.finishingFee) + num(form.shippingFee) + num(form.complexityFee);
+    num(form.finishingFee) +
+    num(form.complexityFee) +
+    (shippingFromEstimate > 0 ? 0 : num(form.shippingFee));
 
   return [
     ["CAD Design", buffered(totals.cadCost)],
@@ -444,7 +470,8 @@ function applyBufferToQuoteRows(totals, form, record) {
     ["Project Integration", buffered(totals.integrationCost)],
     ["Custom Fabrication", buffered(totals.customCost)],
     ["Extra Labor", buffered(totals.extraLaborCost)],
-    ["Finishing / Delivery / Other", buffered(finishingOther)],
+    ["Shipping / Delivery", shippingFromEstimate > 0 ? money(shippingFromEstimate) : "$0.00"],
+    ["Finishing / Other", buffered(finishingOther)],
     ["Discount", `-${money(form.discount)}`],
     ["Tax", money(totals.tax)],
     ["Final Total", money(record.finalTotal)],
@@ -470,7 +497,9 @@ function getPaymentTotals(job) {
 
   let status = "Unpaid";
   if (totalPaid > 0 && totalPaid < num(job.finalTotal)) status = "Partially Paid";
-  if (totalPaid >= num(job.finalTotal)) status = totalPaid > num(job.finalTotal) ? "Overpaid" : "Paid in Full";
+  if (totalPaid >= num(job.finalTotal)) {
+    status = totalPaid > num(job.finalTotal) ? "Overpaid" : "Paid in Full";
+  }
 
   return { totalPaid, remaining, status };
 }
@@ -483,19 +512,25 @@ function buildProductionSummary(job) {
     form.printRuns.forEach((run, index) => {
       rows.push([
         `Print Run ${index + 1}`,
-        `${run.printerId || "Printer"} / ${run.nozzleSize || "Nozzle"} / ${run.materialId || "Material"} / ${run.materialGrams || 0}g / ${run.machineHours || 0} hr est.`,
+        `${run.printerId || "Printer"} / ${run.nozzleSize || "Nozzle"} / ${
+          run.materialId || "Material"
+        } / ${run.materialGrams || 0}g / ${run.machineHours || 0} hr est.`,
       ]);
     });
   }
 
-  if (job.jobAspects?.engraving) {
+  if (job.jobAspects?.engraving || form.jobAspects?.engraving) {
     rows.push([
       "Laser Engraving",
-      `${form.engravingModuleId || "Laser module"} / ${form.engravingMaterialId || "Material"} / ${form.engravingMaterialColor || "Finish"} / ${form.engravingMaterialUnits || 1} unit(s).`,
+      `${form.engravingModuleId || "Laser module"} / ${
+        form.engravingMaterialId || "Material"
+      } / ${form.engravingMaterialColor || "Finish"} / ${
+        form.engravingMaterialUnits || 1
+      } unit(s).`,
     ]);
   }
 
-  if (job.jobAspects?.vinyl) {
+  if (job.jobAspects?.vinyl || form.jobAspects?.vinyl) {
     rows.push([
       "Vinyl Cutting",
       `${form.vinylModuleId || "Cutter module"} service included as quoted.`,
@@ -505,6 +540,8 @@ function buildProductionSummary(job) {
   if (form.customerAddress) {
     rows.push(["Shipping / Delivery Address", form.customerAddress]);
   }
+
+  rows.push(...buildShippingRows(job));
 
   if (form.notes) {
     rows.push(["Project Notes", form.notes]);
@@ -545,12 +582,51 @@ function buildInternalChecklistRows(job) {
     rows.push(["☐", "Weeding / transfer completed"]);
   }
 
+  if (getShippingEstimate(job)) {
+    rows.push(["☐", "Package dimensions and weight confirmed"]);
+    rows.push(["☐", "Shipping label purchased"]);
+    rows.push(["☐", "Tracking number saved / sent"]);
+  }
+
   rows.push(["☐", "Final quality check"]);
   rows.push(["☐", "Photos taken if needed"]);
   rows.push(["☐", "Customer notified"]);
   rows.push(["☐", "Pickup / shipping completed"]);
 
   return rows;
+}
+
+function addShippingSectionIfNeeded(doc, record, y, documentTitle, numberText) {
+  const shippingRows = buildShippingRows(record);
+
+  if (shippingRows.length === 0) return y;
+
+  y = addSectionTitle(doc, "Shipping / Delivery", y, documentTitle, numberText);
+
+  return addTable(
+    doc,
+    {
+      startY: y,
+      head: [["Item", "Details"]],
+      body: shippingRows,
+      theme: "grid",
+      headStyles: {
+        fillColor: RED,
+        textColor: [255, 255, 255],
+      },
+      styles: {
+        fontSize: 8,
+        cellPadding: 3,
+        overflow: "linebreak",
+      },
+      columnStyles: {
+        0: { cellWidth: 45, fontStyle: "bold" },
+        1: { cellWidth: 137 },
+      },
+    },
+    documentTitle,
+    numberText
+  );
 }
 
 export function exportQuotePdf(quote) {
@@ -579,6 +655,8 @@ export function exportQuotePdf(quote) {
     numberText
   );
 
+  y = addShippingSectionIfNeeded(doc, quote, y, documentTitle, numberText);
+
   const form = quote.formData || {};
 
   y = addSectionTitle(doc, "Project Notes", y, documentTitle, numberText);
@@ -589,6 +667,7 @@ export function exportQuotePdf(quote) {
   const terms = [
     "This quote is an estimate based on the project details available at the time it was created.",
     "Final pricing may change if project scope, material choice, quantity, design requirements, shipping, or supply costs change.",
+    "Shipping estimates are based on available dimensions, package weight, carrier/service selection, and manual carrier quotes entered into the system.",
     "Custom work may require a deposit before production begins.",
     "Accepted payment methods: Cash, Venmo, Cash App, PayPal, and Zelle.",
   ].join("\n");
@@ -651,6 +730,8 @@ export function exportInvoicePdf(job) {
 
   y = addSectionTitle(doc, "Service Breakdown", y, documentTitle, numberText);
   y = addTotalsBox(doc, getServiceRows(job), y, documentTitle, numberText);
+
+  y = addShippingSectionIfNeeded(doc, job, y, documentTitle, numberText);
 
   const productionRows = buildProductionSummary(job);
 
@@ -766,7 +847,9 @@ export function exportProductionSheetPdf(job) {
     {
       startY: y,
       head: [["Item", "Details"]],
-      body: scopeRows.length > 0 ? scopeRows : [["General", "No detailed production scope saved."]],
+      body: scopeRows.length > 0
+        ? scopeRows
+        : [["General", "No detailed production scope saved."]],
       theme: "grid",
       headStyles: {
         fillColor: RED,
@@ -819,6 +902,8 @@ export function exportProductionSheetPdf(job) {
     );
   }
 
+  y = addShippingSectionIfNeeded(doc, job, y, documentTitle, numberText);
+
   y = addSectionTitle(doc, "Production Checklist", y, documentTitle, numberText);
 
   y = addTable(
@@ -853,6 +938,9 @@ export function exportProductionSheetPdf(job) {
       form.notes ? `Quote Notes: ${form.notes}` : "",
       job.actuals?.notes ? `Actual Notes: ${job.actuals.notes}` : "",
       job.payments?.paymentNotes ? `Payment Notes: ${job.payments.paymentNotes}` : "",
+      getShippingEstimate(job)?.notes
+        ? `Shipping Notes: ${getShippingEstimate(job).notes}`
+        : "",
     ]
       .filter(Boolean)
       .join("\n\n") || "No internal notes saved.",
