@@ -228,9 +228,7 @@ function addWrappedText(doc, text, y, documentTitle, numberText) {
 }
 
 function buildContactRows(record) {
-  const rows = [
-    ["Customer", record.customerName || "Unnamed Customer"],
-  ];
+  const rows = [["Customer", record.customerName || "Unnamed Customer"]];
 
   if (record.customerPhone || record.formData?.customerPhone) {
     rows.push(["Phone", record.customerPhone || record.formData?.customerPhone || ""]);
@@ -359,6 +357,74 @@ function addTable(doc, options, documentTitle, numberText) {
   return doc.lastAutoTable.finalY + 10;
 }
 
+function addSignatureSection(doc, y, documentTitle, numberText) {
+  y = addSectionTitle(doc, "Approval / Signature", y, documentTitle, numberText);
+  y = ensureSpace(doc, y, 45, documentTitle, numberText);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(40, 40, 40);
+
+  const approvalText =
+    "By signing below, the customer acknowledges the document details, project scope, payment status, and any remaining balance shown on this document.";
+
+  const lines = doc.splitTextToSize(approvalText, 182);
+  doc.text(lines, PAGE.left, y);
+
+  y += lines.length * 5 + 14;
+
+  doc.setDrawColor(80, 80, 80);
+  doc.line(PAGE.left, y, 105, y);
+  doc.line(125, y, PAGE.right, y);
+
+  doc.setFontSize(8);
+  doc.setTextColor(...GRAY);
+  doc.text("Customer Signature", PAGE.left, y + 6);
+  doc.text("Date", 125, y + 6);
+
+  return y + 16;
+}
+
+function addInternalSignoffSection(doc, y, documentTitle, numberText) {
+  y = addSectionTitle(doc, "Internal Production Sign-Off", y, documentTitle, numberText);
+  y = ensureSpace(doc, y, 55, documentTitle, numberText);
+
+  const rows = [
+    ["Production Started By", ""],
+    ["Production Completed By", ""],
+    ["Quality Checked By", ""],
+    ["Packed / Delivered By", ""],
+  ];
+
+  autoTable(doc, {
+    startY: y,
+    body: rows,
+    theme: "grid",
+    margin: { left: PAGE.left, right: PAGE.left },
+    styles: {
+      fontSize: 9,
+      cellPadding: 5,
+      lineColor: [210, 210, 210],
+      lineWidth: 0.2,
+    },
+    columnStyles: {
+      0: {
+        fontStyle: "bold",
+        textColor: RED,
+        cellWidth: 62,
+      },
+      1: {
+        cellWidth: 120,
+      },
+    },
+    didDrawPage() {
+      addFooter(doc);
+    },
+  });
+
+  return doc.lastAutoTable.finalY + 10;
+}
+
 function applyBufferToQuoteRows(totals, form, record) {
   const bufferMultiplier = 1 + num(totals.appliedBufferPercent) / 100;
   const buffered = (value) => money(num(value) * bufferMultiplier);
@@ -417,17 +483,23 @@ function buildProductionSummary(job) {
     form.printRuns.forEach((run, index) => {
       rows.push([
         `Print Run ${index + 1}`,
-        `${run.printerId || "Printer"} / ${run.nozzleSize || "Nozzle"}mm / ${run.materialId || "Material"} / ${run.materialGrams || 0}g / ${run.machineHours || 0} hr est.`,
+        `${run.printerId || "Printer"} / ${run.nozzleSize || "Nozzle"} / ${run.materialId || "Material"} / ${run.materialGrams || 0}g / ${run.machineHours || 0} hr est.`,
       ]);
     });
   }
 
   if (job.jobAspects?.engraving) {
-    rows.push(["Laser Engraving", "H2S laser engraving service included as quoted."]);
+    rows.push([
+      "Laser Engraving",
+      `${form.engravingModuleId || "Laser module"} / ${form.engravingMaterialId || "Material"} / ${form.engravingMaterialColor || "Finish"} / ${form.engravingMaterialUnits || 1} unit(s).`,
+    ]);
   }
 
   if (job.jobAspects?.vinyl) {
-    rows.push(["Vinyl Cutting", "H2S cutting/vinyl service included as quoted."]);
+    rows.push([
+      "Vinyl Cutting",
+      `${form.vinylModuleId || "Cutter module"} service included as quoted.`,
+    ]);
   }
 
   if (form.customerAddress) {
@@ -441,6 +513,46 @@ function buildProductionSummary(job) {
   return rows;
 }
 
+function buildInternalChecklistRows(job) {
+  const form = job.formData || job.quoteSnapshot?.formData || {};
+  const rows = [
+    ["☐", "Confirm customer info and scope"],
+    ["☐", "Confirm required files/designs/references are available"],
+    ["☐", "Confirm material/color/module selections"],
+  ];
+
+  if (job.jobAspects?.cad || form.jobAspects?.cad) {
+    rows.push(["☐", "CAD complete / design approved"]);
+  }
+
+  if (job.jobAspects?.printing || form.jobAspects?.printing) {
+    rows.push(["☐", "Slicer settings checked"]);
+    rows.push(["☐", "Print started"]);
+    rows.push(["☐", "Print completed"]);
+    rows.push(["☐", "Supports removed / cleanup completed"]);
+  }
+
+  if (job.jobAspects?.engraving || form.jobAspects?.engraving) {
+    rows.push(["☐", "Laser file checked"]);
+    rows.push(["☐", "Material aligned"]);
+    rows.push(["☐", "Engraving test / focus checked"]);
+    rows.push(["☐", "Engraving completed"]);
+  }
+
+  if (job.jobAspects?.vinyl || form.jobAspects?.vinyl) {
+    rows.push(["☐", "Cut file checked"]);
+    rows.push(["☐", "Vinyl cut completed"]);
+    rows.push(["☐", "Weeding / transfer completed"]);
+  }
+
+  rows.push(["☐", "Final quality check"]);
+  rows.push(["☐", "Photos taken if needed"]);
+  rows.push(["☐", "Customer notified"]);
+  rows.push(["☐", "Pickup / shipping completed"]);
+
+  return rows;
+}
+
 export function exportQuotePdf(quote) {
   const doc = new jsPDF();
 
@@ -450,9 +562,7 @@ export function exportQuotePdf(quote) {
   let y = addHeader(doc, documentTitle, numberText);
 
   y = addInfoBlock(doc, quote, y, documentTitle, numberText);
-
   y = addSectionTitle(doc, "Quote Summary", y, documentTitle, numberText);
-
   y = addTotalsBox(doc, getServiceRows(quote), y, documentTitle, numberText);
 
   y = addSectionTitle(doc, "Payment Estimate", y, documentTitle, numberText);
@@ -483,7 +593,8 @@ export function exportQuotePdf(quote) {
     "Accepted payment methods: Cash, Venmo, Cash App, PayPal, and Zelle.",
   ].join("\n");
 
-  addWrappedText(doc, terms, y, documentTitle, numberText);
+  y = addWrappedText(doc, terms, y, documentTitle, numberText);
+  y = addSignatureSection(doc, y, documentTitle, numberText);
 
   addEmbeddedData(doc, {
     app: "overkill-solutions-app",
@@ -539,7 +650,6 @@ export function exportInvoicePdf(job) {
   );
 
   y = addSectionTitle(doc, "Service Breakdown", y, documentTitle, numberText);
-
   y = addTotalsBox(doc, getServiceRows(job), y, documentTitle, numberText);
 
   const productionRows = buildProductionSummary(job);
@@ -575,7 +685,7 @@ export function exportInvoicePdf(job) {
 
   y = addSectionTitle(doc, "Payment History", y, documentTitle, numberText);
 
-  addTable(
+  y = addTable(
     doc,
     {
       startY: y,
@@ -606,6 +716,8 @@ export function exportInvoicePdf(job) {
     numberText
   );
 
+  addSignatureSection(doc, y, documentTitle, numberText);
+
   addEmbeddedData(doc, {
     app: "overkill-solutions-app",
     version: 1,
@@ -618,5 +730,150 @@ export function exportInvoicePdf(job) {
     `${safeFileName(invoiceNumber)}-${safeFileName(
       job.customerName
     )}-invoice.pdf`
+  );
+}
+
+export function exportProductionSheetPdf(job) {
+  const doc = new jsPDF();
+
+  const documentTitle = "PRODUCTION SHEET";
+  const numberText = `Job Number: ${job.jobNumber || "N/A"}`;
+  const form = job.formData || job.quoteSnapshot?.formData || {};
+  const invoiceNumber = getInvoiceNumber(job);
+
+  let y = addHeader(doc, documentTitle, numberText);
+
+  y = addInfoBlock(
+    doc,
+    job,
+    y,
+    documentTitle,
+    numberText,
+    [
+      ["Invoice Number", invoiceNumber],
+      ["Quote Number", job.quoteNumber || "N/A"],
+      ["Job Status", job.status || "Approved"],
+      ["Internal Use", "Not a customer invoice"],
+    ]
+  );
+
+  y = addSectionTitle(doc, "Production Scope", y, documentTitle, numberText);
+
+  const scopeRows = buildProductionSummary(job);
+
+  y = addTable(
+    doc,
+    {
+      startY: y,
+      head: [["Item", "Details"]],
+      body: scopeRows.length > 0 ? scopeRows : [["General", "No detailed production scope saved."]],
+      theme: "grid",
+      headStyles: {
+        fillColor: RED,
+        textColor: [255, 255, 255],
+      },
+      styles: {
+        fontSize: 8,
+        cellPadding: 3,
+        overflow: "linebreak",
+      },
+      columnStyles: {
+        0: { cellWidth: 45, fontStyle: "bold" },
+        1: { cellWidth: 137 },
+      },
+    },
+    documentTitle,
+    numberText
+  );
+
+  if (form.printRuns?.length > 0) {
+    y = addSectionTitle(doc, "Print Run Details", y, documentTitle, numberText);
+
+    y = addTable(
+      doc,
+      {
+        startY: y,
+        head: [["Run", "Printer", "Nozzle", "Material", "Grams", "Hours", "Rate"]],
+        body: form.printRuns.map((run, index) => [
+          `Run ${index + 1}`,
+          run.printerId || "",
+          run.nozzleSize || "",
+          run.materialId || "",
+          `${run.materialGrams || 0}g`,
+          `${run.machineHours || 0}`,
+          money(run.machineRate || 0),
+        ]),
+        theme: "grid",
+        headStyles: {
+          fillColor: RED,
+          textColor: [255, 255, 255],
+        },
+        styles: {
+          fontSize: 8,
+          cellPadding: 3,
+          overflow: "linebreak",
+        },
+      },
+      documentTitle,
+      numberText
+    );
+  }
+
+  y = addSectionTitle(doc, "Production Checklist", y, documentTitle, numberText);
+
+  y = addTable(
+    doc,
+    {
+      startY: y,
+      head: [["", "Task"]],
+      body: buildInternalChecklistRows(job),
+      theme: "grid",
+      headStyles: {
+        fillColor: RED,
+        textColor: [255, 255, 255],
+      },
+      styles: {
+        fontSize: 9,
+        cellPadding: 3,
+        overflow: "linebreak",
+      },
+      columnStyles: {
+        0: { cellWidth: 12, halign: "center" },
+        1: { cellWidth: 170 },
+      },
+    },
+    documentTitle,
+    numberText
+  );
+
+  y = addSectionTitle(doc, "Internal Notes", y, documentTitle, numberText);
+  y = addWrappedText(
+    doc,
+    [
+      form.notes ? `Quote Notes: ${form.notes}` : "",
+      job.actuals?.notes ? `Actual Notes: ${job.actuals.notes}` : "",
+      job.payments?.paymentNotes ? `Payment Notes: ${job.payments.paymentNotes}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n") || "No internal notes saved.",
+    y,
+    documentTitle,
+    numberText
+  );
+
+  addInternalSignoffSection(doc, y, documentTitle, numberText);
+
+  addEmbeddedData(doc, {
+    app: "overkill-solutions-app",
+    version: 1,
+    kind: "production-sheet",
+    exportedAt: new Date().toISOString(),
+    record: job,
+  });
+
+  doc.save(
+    `${safeFileName(job.jobNumber)}-${safeFileName(
+      job.customerName
+    )}-production-sheet.pdf`
   );
 }

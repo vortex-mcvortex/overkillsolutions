@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Save, RotateCcw, Plus, Trash2, Wand2, XCircle } from "lucide-react";
+import { Save, RotateCcw, Plus, Trash2, Wand2, XCircle, UserCheck } from "lucide-react";
 
 const DEFAULT_SETTINGS = {
   defaultTaxPercent: 7,
@@ -8,7 +8,7 @@ const DEFAULT_SETTINGS = {
   customerFields: {
     requireName: true,
     requirePhone: true,
-    requireEmail: true,
+    requireEmail: false,
     showAddress: true,
   },
 
@@ -20,6 +20,22 @@ const DEFAULT_SETTINGS = {
     h2sLaser40w: 6,
     h2sCutter: 4,
   },
+
+  machineModules: [
+    { id: "p1s", label: "Bambu P1S", type: "printer", rateKey: "p1s", active: true },
+    { id: "x1c", label: "Bambu X1C", type: "printer", rateKey: "x1c", active: true },
+    { id: "h2s", label: "Bambu H2S", type: "printer", rateKey: "h2sPrint", active: true },
+    { id: "h2s-laser-10w", label: "H2S Laser — 10W", type: "laser", rateKey: "h2sLaser10w", active: true },
+    { id: "h2s-laser-40w", label: "H2S Laser — 40W", type: "laser", rateKey: "h2sLaser40w", active: true },
+    { id: "h2s-cutter", label: "H2S Cutter", type: "cutter", rateKey: "h2sCutter", active: true },
+  ],
+
+  nozzles: [
+    { id: "0.2", label: "0.2mm — Detail", diameter: 0.2, machineRateAdd: 1, marketMultiplier: 1.25, active: true },
+    { id: "0.4", label: "0.4mm — Standard", diameter: 0.4, machineRateAdd: 0, marketMultiplier: 1, active: true },
+    { id: "0.6", label: "0.6mm — Strong/Faster", diameter: 0.6, machineRateAdd: 0.25, marketMultiplier: 1.05, active: true },
+    { id: "0.8", label: "0.8mm — Heavy Duty", diameter: 0.8, machineRateAdd: 0.5, marketMultiplier: 1.1, active: true },
+  ],
 
   cadPresets: [
     { id: "basic", label: "Basic CAD", amount: 25, active: true },
@@ -65,41 +81,20 @@ const DEFAULT_SETTINGS = {
     { id: "pla", label: "PLA", costPerGram: 0.03, group: "standard", active: true },
     { id: "petg", label: "PETG", costPerGram: 0.03, group: "standard", active: true },
     { id: "abs", label: "ABS", costPerGram: 0.03, group: "standard", active: true },
-    { id: "asa", label: "ASA", costPerGram: 0.05, group: "specialty", active: true },
-    { id: "tpu", label: "TPU", costPerGram: 0.05, group: "specialty", active: true },
-    { id: "pc", label: "PC", costPerGram: 0.06, group: "specialty", active: true },
-    { id: "carbon-fiber", label: "Carbon Fiber", costPerGram: 0.07, group: "specialty", active: true },
   ],
 
   engravingMaterials: [
-    { id: "none", label: "None / Customer Provided", packCost: 0, packCount: 1, colors: "N/A", active: true },
-    { id: "aluminum-card", label: "Aluminum Card", packCost: 3.89, packCount: 1, colors: "Black, Silver, Red, Blue, Gold, Rainbow", active: true },
-    { id: "stainless-round-tag", label: "Round Stainless Steel Tag", packCost: 6.89, packCount: 5, colors: "Stainless", active: true },
-    { id: "basswood-2mm", label: "2mm Basswood Plywood", packCost: 13.89, packCount: 6, colors: "Natural", active: true },
-    { id: "basswood-3mm", label: "3mm Basswood Plywood", packCost: 14.89, packCount: 6, colors: "Natural", active: true },
-    { id: "sapele-3mm", label: "3mm Sapele Plywood", packCost: 33.89, packCount: 6, colors: "Sapele", active: true },
+    { id: "none", label: "None / Customer Provided", packCost: 0, packCount: 1, colors: "N/A", materialType: "customer-provided", active: true },
+    { id: "aluminum-card", label: "Aluminum Card", packCost: 3.89, packCount: 1, colors: "Black, Silver, Red, Blue, Gold, Rainbow", materialType: "metal", active: true },
+    { id: "stainless-steel", label: "Stainless Steel", packCost: 0, packCount: 1, colors: "Raw Stainless", materialType: "metal", active: true },
+    { id: "titanium", label: "Titanium", packCost: 0, packCount: 1, colors: "Raw Titanium", materialType: "metal", active: true },
   ],
 
   vinylMaterials: [
     { id: "none", label: "None / Customer Provided", packCost: 0, packCount: 1, colors: "N/A", active: true },
     { id: "matte-removable-vinyl", label: "Matte Removable Vinyl", packCost: 9.89, packCount: 10, colors: "Black, Red, Orange, Yellow, Green, Blue, Silver, White", active: true },
-    { id: "transfer-tape", label: "Transfer Tape", packCost: 7.89, packCount: 10, colors: "Clear Grid", active: true },
   ],
 };
-
-const PRINTERS = [
-  { id: "p1s", label: "Bambu P1S", rateKey: "p1s" },
-  { id: "x1c", label: "Bambu X1C", rateKey: "x1c" },
-  { id: "h2s", label: "Bambu H2S", rateKey: "h2sPrint" },
-  { id: "other", label: "Other Printer", rateKey: "p1s" },
-];
-
-const NOZZLES = [
-  { id: "0.2", label: "0.2mm — Detail", note: "Highest detail, slower, more brittle", machineRateAdd: 1, marketMultiplier: 1.25 },
-  { id: "0.4", label: "0.4mm — Standard", note: "Default balanced option", machineRateAdd: 0, marketMultiplier: 1 },
-  { id: "0.6", label: "0.6mm — Strong/Faster", note: "Stronger and faster, less detail", machineRateAdd: 0.25, marketMultiplier: 1.05 },
-  { id: "0.8", label: "0.8mm — Heavy Duty", note: "Strong and fast, low detail", machineRateAdd: 0.5, marketMultiplier: 1.1 },
-];
 
 const COMPLEXITY_LEVELS = [
   { id: "none", label: "None", engraving: 0, vinyl: 0 },
@@ -114,6 +109,7 @@ const DEFAULT_FORM = {
   customerPhone: "",
   customerEmail: "",
   customerAddress: "",
+  customerKey: "",
   jobName: "",
   jobAspects: {
     cad: false,
@@ -127,11 +123,13 @@ const DEFAULT_FORM = {
   quantity: 1,
   cadPresetId: "basic",
   customCadAmount: "",
+  engravingModuleId: "h2s-laser-10w",
   engravingMaterialId: "none",
   engravingMaterialColor: "N/A",
   engravingMaterialUnits: 1,
   engravingComplexity: "simple",
   engravingFee: 0,
+  vinylModuleId: "h2s-cutter",
   vinylMaterialLines: [],
   vinylComplexity: "simple",
   vinylFee: 0,
@@ -169,6 +167,14 @@ function roundUpMoney(value) {
   return Math.ceil(value * 100) / 100;
 }
 
+function clean(value) {
+  return String(value || "").trim();
+}
+
+function digitsOnly(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
 function colorsToArray(colors) {
   if (Array.isArray(colors)) return colors;
   return String(colors || "N/A")
@@ -199,6 +205,8 @@ function getSettings() {
       ...saved,
       customerFields: { ...DEFAULT_SETTINGS.customerFields, ...(saved.customerFields || {}) },
       machineRates: { ...DEFAULT_SETTINGS.machineRates, ...(saved.machineRates || {}) },
+      machineModules: saved.machineModules || DEFAULT_SETTINGS.machineModules,
+      nozzles: saved.nozzles || DEFAULT_SETTINGS.nozzles,
       setupFees: { ...DEFAULT_SETTINGS.setupFees, ...(saved.setupFees || {}) },
       integrationCharges: { ...DEFAULT_SETTINGS.integrationCharges, ...(saved.integrationCharges || {}) },
       minimumCharges: { ...DEFAULT_SETTINGS.minimumCharges, ...(saved.minimumCharges || {}) },
@@ -213,9 +221,108 @@ function getSettings() {
   }
 }
 
+function customerKey(record) {
+  const email = clean(record.customerEmail || record.formData?.customerEmail).toLowerCase();
+  const phone = digitsOnly(record.customerPhone || record.formData?.customerPhone);
+  const name = clean(record.customerName || record.formData?.customerName).toLowerCase();
+
+  if (email) return `email:${email}`;
+  if (phone) return `phone:${phone}`;
+  if (name) return `name:${name}`;
+
+  return `unknown:${record.id}`;
+}
+
+function getCustomerInfo(record) {
+  return {
+    key: customerKey(record),
+    source: "generated",
+    name: clean(record.customerName || record.formData?.customerName) || "Unknown Customer",
+    phone: clean(record.customerPhone || record.formData?.customerPhone),
+    email: clean(record.customerEmail || record.formData?.customerEmail),
+    address: clean(record.customerAddress || record.formData?.customerAddress),
+    notes: "",
+  };
+}
+
+function buildCustomerList(quotes = [], jobs = [], manualCustomers = [], customerOverrides = {}) {
+  const map = new Map();
+
+  manualCustomers.forEach((customer) => {
+    map.set(customer.key, {
+      key: customer.key,
+      source: "manual",
+      name: customer.name || "Manual Customer",
+      phone: customer.phone || "",
+      email: customer.email || "",
+      address: customer.address || "",
+      notes: customer.notes || "",
+    });
+  });
+
+  [...quotes, ...jobs].forEach((record) => {
+    const info = getCustomerInfo(record);
+    const override = customerOverrides[info.key] || {};
+
+    if (!map.has(info.key)) {
+      map.set(info.key, {
+        ...info,
+        ...override,
+      });
+    } else {
+      const existing = map.get(info.key);
+
+      map.set(info.key, {
+        ...existing,
+        name: override.name || existing.name || info.name,
+        phone: override.phone || existing.phone || info.phone,
+        email: override.email || existing.email || info.email,
+        address: override.address || existing.address || info.address,
+        notes: override.notes || existing.notes || "",
+      });
+    }
+  });
+
+  return [...map.values()].sort((a, b) =>
+    String(a.name || "").localeCompare(String(b.name || ""))
+  );
+}
+
+function findCustomerMatches(form, customers) {
+  const typedName = clean(form.customerName).toLowerCase();
+  const typedPhone = digitsOnly(form.customerPhone);
+  const typedEmail = clean(form.customerEmail).toLowerCase();
+
+  if (!typedName && !typedPhone && !typedEmail) return [];
+
+  return customers
+    .map((customer) => {
+      let score = 0;
+
+      const customerName = clean(customer.name).toLowerCase();
+      const customerPhone = digitsOnly(customer.phone);
+      const customerEmail = clean(customer.email).toLowerCase();
+
+      if (typedEmail && customerEmail && typedEmail === customerEmail) score += 100;
+      if (typedPhone && customerPhone && typedPhone === customerPhone) score += 95;
+      if (typedPhone.length >= 4 && customerPhone.includes(typedPhone)) score += 45;
+      if (typedName.length >= 3 && customerName === typedName) score += 75;
+      if (typedName.length >= 3 && customerName.includes(typedName)) score += 35;
+      if (typedName.length >= 3 && typedName.includes(customerName)) score += 25;
+
+      return {
+        ...customer,
+        matchScore: score,
+      };
+    })
+    .filter((customer) => customer.matchScore > 0)
+    .sort((a, b) => b.matchScore - a.matchScore)
+    .slice(0, 3);
+}
+
 function materialUnitCost(material) {
   if (!material || !material.packCount) return 0;
-  return num(material.packCost) / num(material.packCount);
+  return num(material.packCost) / Math.max(1, num(material.packCount));
 }
 
 function getActiveItems(items) {
@@ -226,43 +333,67 @@ function getById(items, id, fallbackIndex = 0) {
   return items.find((item) => item.id === id) || items[fallbackIndex] || {};
 }
 
-function getNozzle(id) {
-  return NOZZLES.find((item) => item.id === id) || NOZZLES[1];
+function getActiveModules(settings, type) {
+  return getActiveItems(settings.machineModules).filter((module) => module.type === type);
 }
 
-function getPrinter(id) {
-  return PRINTERS.find((item) => item.id === id) || PRINTERS[0];
+function getActiveNozzles(settings) {
+  return getActiveItems(settings.nozzles);
+}
+
+function getPrinterModule(settings, id) {
+  const printers = getActiveModules(settings, "printer");
+  return getById(printers, id, 0);
+}
+
+function getLaserModule(settings, id) {
+  const lasers = getActiveModules(settings, "laser");
+  return getById(lasers, id, 0);
+}
+
+function getCutterModule(settings, id) {
+  const cutters = getActiveModules(settings, "cutter");
+  return getById(cutters, id, 0);
+}
+
+function getNozzle(settings, id) {
+  const nozzles = getActiveNozzles(settings);
+  return getById(nozzles, id, 0);
 }
 
 function suggestedMachineRate(settings, printerId, material, nozzle) {
-  const printer = getPrinter(printerId);
+  const printer = getPrinterModule(settings, printerId);
   const baseRate = num(settings.machineRates[printer.rateKey]);
   const specialtyAdd = material?.group === "specialty" ? 1.5 : 0;
 
-  return roundUpMoney(baseRate + specialtyAdd + nozzle.machineRateAdd);
+  return roundUpMoney(baseRate + specialtyAdd + num(nozzle.machineRateAdd));
 }
 
 function suggestedSetupTier(material, nozzle) {
+  const diameter = num(nozzle.diameter || nozzle.id);
+
   if (material?.group === "specialty") return "advanced";
-  if (nozzle.id === "0.2") return "moderate";
-  if (nozzle.id === "0.8") return "moderate";
+  if (diameter <= 0.25) return "moderate";
+  if (diameter >= 0.8) return "moderate";
   return "basic";
 }
 
 function setupReason(material, nozzle) {
+  const diameter = num(nozzle.diameter || nozzle.id);
+
   if (material?.group === "specialty") {
     return "Specialty filament is harder to tune, load, and recover from failed attempts.";
   }
 
-  if (nozzle.id === "0.2") {
-    return "0.2mm nozzle prints slower and needs more detail-focused setup.";
+  if (diameter <= 0.25) {
+    return "Small nozzles print slower and need more detail-focused setup.";
   }
 
-  if (nozzle.id === "0.8") {
-    return "0.8mm nozzle usually needs strength-focused setup and heavier extrusion tuning.";
+  if (diameter >= 0.8) {
+    return "Large nozzles usually need strength-focused setup and heavier extrusion tuning.";
   }
 
-  return "Standard material with a 0.4mm nozzle is the easiest normal setup.";
+  return "Standard material with a standard nozzle is the easiest normal setup.";
 }
 
 function curvedBufferPercent(subtotal, settings) {
@@ -275,23 +406,30 @@ function curvedBufferPercent(subtotal, settings) {
 
 function createPrintRun(settings) {
   const activeMaterials = getActiveItems(settings.printMaterials);
+  const activePrinters = getActiveModules(settings, "printer");
+  const activeNozzles = getActiveNozzles(settings);
+
   const material = activeMaterials[0] || DEFAULT_SETTINGS.printMaterials[0];
-  const nozzle = getNozzle("0.4");
+  const printer = activePrinters[0] || DEFAULT_SETTINGS.machineModules[0];
+  const nozzle = activeNozzles.find((item) => String(item.diameter) === "0.4") || activeNozzles[0] || DEFAULT_SETTINGS.nozzles[1];
 
   return {
     id: crypto.randomUUID(),
-    printerId: "p1s",
+    printerId: printer.id,
     materialId: material.id,
     nozzleSize: nozzle.id,
     materialGrams: 0,
     machineHours: 1,
-    machineRate: suggestedMachineRate(settings, "p1s", material, nozzle),
+    machineRate: suggestedMachineRate(settings, printer.id, material, nozzle),
   };
 }
 
 function createVinylLine(settings) {
   const activeMaterials = getActiveItems(settings.vinylMaterials);
-  const material = activeMaterials.find((item) => item.id !== "none") || activeMaterials[0] || DEFAULT_SETTINGS.vinylMaterials[0];
+  const material =
+    activeMaterials.find((item) => item.id !== "none") ||
+    activeMaterials[0] ||
+    DEFAULT_SETTINGS.vinylMaterials[0];
 
   return {
     id: crypto.randomUUID(),
@@ -316,7 +454,7 @@ function calculatePrintSetup(settings, printRuns) {
   const rankedRuns = printRuns
     .map((run) => {
       const material = getById(printMaterials, run.materialId);
-      const nozzle = getNozzle(run.nozzleSize);
+      const nozzle = getNozzle(settings, run.nozzleSize);
       const tierId = suggestedSetupTier(material, nozzle);
       const tierAmounts = settings.setupFees;
 
@@ -336,11 +474,11 @@ function calculatePrintSetup(settings, printRuns) {
 
   const additionalSetup = rankedRuns.slice(1).reduce((sum, item) => {
     const material = getById(printMaterials, item.run.materialId);
-    const nozzle = getNozzle(item.run.nozzleSize);
+    const nozzle = getNozzle(settings, item.run.nozzleSize);
     const primaryMaterial = getById(printMaterials, primary.run.materialId);
-    const primaryNozzle = getNozzle(primary.run.nozzleSize);
-    const primaryPrinter = getPrinter(primary.run.printerId);
-    const printer = getPrinter(item.run.printerId);
+    const primaryNozzle = getNozzle(settings, primary.run.nozzleSize);
+    const primaryPrinter = getPrinterModule(settings, primary.run.printerId);
+    const printer = getPrinterModule(settings, item.run.printerId);
 
     if (material.group === "specialty") return sum + 10;
 
@@ -380,13 +518,16 @@ function getComplexity(id) {
   return COMPLEXITY_LEVELS.find((item) => item.id === id) || COMPLEXITY_LEVELS[0];
 }
 
-function suggestEngravingService(form) {
+function suggestEngravingService(form, settings) {
   const complexity = getComplexity(form.engravingComplexity);
   const units = Math.max(1, num(form.engravingMaterialUnits));
   const stackFactor = serviceStackDiscount(form.jobAspects);
   const unitAdd = Math.max(0, units - 1) * 3;
+  const module = getLaserModule(settings, form.engravingModuleId);
+  const moduleRate = num(settings.machineRates[module.rateKey]);
+  const moduleAdjustment = moduleRate > 4 ? moduleRate - 4 : 0;
 
-  return roundUpMoney((complexity.engraving + unitAdd) * stackFactor);
+  return roundUpMoney((complexity.engraving + unitAdd + moduleAdjustment) * stackFactor);
 }
 
 function suggestVinylService(form) {
@@ -421,6 +562,9 @@ function buildInitialForm(settings, quote = null) {
   const activeCadPresets = getActiveItems(settings.cadPresets);
   const defaultCadId = activeCadPresets[0]?.id || "basic";
 
+  const activeLasers = getActiveModules(settings, "laser");
+  const activeCutters = getActiveModules(settings, "cutter");
+
   return {
     ...DEFAULT_FORM,
     depositPercent: settings.defaultDepositPercent,
@@ -428,6 +572,8 @@ function buildInitialForm(settings, quote = null) {
     basicMinimum: settings.minimumCharges.printMinimum,
     cadPrintMinimum: settings.minimumCharges.cadPrintMinimum,
     cadPresetId: defaultCadId,
+    engravingModuleId: activeLasers[0]?.id || DEFAULT_FORM.engravingModuleId,
+    vinylModuleId: activeCutters[0]?.id || DEFAULT_FORM.vinylModuleId,
     ...sourceForm,
     printRuns:
       sourceForm.printRuns?.length > 0
@@ -461,44 +607,60 @@ function Field({
         placeholder={placeholder}
         required={required}
         onChange={(event) => {
-          let value = event.target.value;
+          let nextValue = event.target.value;
 
           if (type === "tel") {
-            const digits = value.replace(/\D/g, "").slice(0, 10);
+            const digits = nextValue.replace(/\D/g, "").slice(0, 10);
 
             if (digits.length <= 3) {
-              value = digits;
+              nextValue = digits;
             } else if (digits.length <= 6) {
-              value = `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
+              nextValue = `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
             } else {
-              value = `(${digits.slice(0, 3)}) ${digits.slice(
-                3,
-                6
-              )}-${digits.slice(6)}`;
+              nextValue = `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
             }
           }
 
-          onChange(value);
+          onChange(nextValue);
         }}
       />
     </label>
   );
 }
 
-export default function CalculatorPage({ onSaveQuote, editingQuote, onCancelEdit }) {
+export default function CalculatorPage({
+  onSaveQuote,
+  editingQuote,
+  onCancelEdit,
+  quotes = [],
+  jobs = [],
+  manualCustomers = [],
+  customerOverrides = {},
+}) {
   const [settings, setSettings] = useState(getSettings);
   const [form, setForm] = useState(() => buildInitialForm(settings, editingQuote));
+  const [dismissedCustomerKeys, setDismissedCustomerKeys] = useState([]);
 
   useEffect(() => {
     const freshSettings = getSettings();
     setSettings(freshSettings);
     setForm(buildInitialForm(freshSettings, editingQuote));
+    setDismissedCustomerKeys([]);
   }, [editingQuote]);
+
+  const customers = useMemo(
+    () => buildCustomerList(quotes, jobs, manualCustomers, customerOverrides),
+    [quotes, jobs, manualCustomers, customerOverrides]
+  );
 
   const activePrintMaterials = getActiveItems(settings.printMaterials);
   const activeEngravingMaterials = getActiveItems(settings.engravingMaterials);
   const activeVinylMaterials = getActiveItems(settings.vinylMaterials);
   const activeCadPresets = getActiveItems(settings.cadPresets);
+  const activePrinters = getActiveModules(settings, "printer");
+  const activeLasers = getActiveModules(settings, "laser");
+  const activeCutters = getActiveModules(settings, "cutter");
+  const activeNozzles = getActiveNozzles(settings);
 
   const selectedCadPreset =
     activeCadPresets.find((item) => item.id === form.cadPresetId) ||
@@ -507,6 +669,19 @@ export default function CalculatorPage({ onSaveQuote, editingQuote, onCancelEdit
 
   const selectedEngravingMaterial =
     getById(activeEngravingMaterials, form.engravingMaterialId);
+
+  const selectedEngravingModule = getLaserModule(settings, form.engravingModuleId);
+  const selectedVinylModule = getCutterModule(settings, form.vinylModuleId);
+
+  const customerMatches = useMemo(() => {
+    return findCustomerMatches(form, customers).filter(
+      (customer) =>
+        customer.key !== form.customerKey &&
+        !dismissedCustomerKeys.includes(customer.key)
+    );
+  }, [form, customers, dismissedCustomerKeys]);
+
+  const bestCustomerMatch = customerMatches[0];
 
   const usesQuantity =
     form.jobAspects.printing || form.jobAspects.engraving || form.jobAspects.vinyl;
@@ -518,7 +693,7 @@ export default function CalculatorPage({ onSaveQuote, editingQuote, onCancelEdit
       ? printSetup.totalSetup
       : num(form.printSetupOverride);
 
-  const suggestedEngravingFee = suggestEngravingService(form);
+  const suggestedEngravingFee = suggestEngravingService(form, settings);
   const suggestedVinylFee = suggestVinylService(form);
   const suggestedIntegrationLevel = suggestIntegrationComplexity(form.jobAspects);
   const suggestedIntegration = suggestIntegrationFee(settings, form);
@@ -639,8 +814,8 @@ export default function CalculatorPage({ onSaveQuote, editingQuote, onCancelEdit
     const perUnit = usesQuantity ? roundUpMoney(finalTotal / quantity) : finalTotal;
 
     const strongestNozzleMultiplier = form.printRuns.reduce((highest, run) => {
-      const nozzle = getNozzle(run.nozzleSize);
-      return Math.max(highest, nozzle.marketMultiplier);
+      const nozzle = getNozzle(settings, run.nozzleSize);
+      return Math.max(highest, num(nozzle.marketMultiplier || 1));
     }, 1);
 
     const marketBase = Math.max(finalTotal, materialCost + machineCost + cadCost);
@@ -703,6 +878,27 @@ export default function CalculatorPage({ onSaveQuote, editingQuote, onCancelEdit
     setForm((current) => ({ ...current, [key]: value }));
   }
 
+  function applyCustomer(customer) {
+    setForm((current) => ({
+      ...current,
+      customerKey: customer.key,
+      customerName: customer.name || current.customerName,
+      customerPhone: customer.phone || current.customerPhone,
+      customerEmail: customer.email || current.customerEmail,
+      customerAddress: customer.address || current.customerAddress,
+    }));
+
+    setDismissedCustomerKeys((current) =>
+      current.filter((key) => key !== customer.key)
+    );
+  }
+
+  function dismissCustomerMatch(customerKey) {
+    setDismissedCustomerKeys((current) =>
+      current.includes(customerKey) ? current : [...current, customerKey]
+    );
+  }
+
   function addPrintRun() {
     setForm((current) => ({
       ...current,
@@ -720,7 +916,7 @@ export default function CalculatorPage({ onSaveQuote, editingQuote, onCancelEdit
 
         if (key === "materialId" || key === "nozzleSize" || key === "printerId") {
           const material = getById(activePrintMaterials, updatedRun.materialId);
-          const nozzle = getNozzle(updatedRun.nozzleSize);
+          const nozzle = getNozzle(settings, updatedRun.nozzleSize);
 
           return {
             ...updatedRun,
@@ -815,7 +1011,7 @@ export default function CalculatorPage({ onSaveQuote, editingQuote, onCancelEdit
   function applySuggestedEngraving() {
     setForm((current) => ({
       ...current,
-      engravingFee: suggestEngravingService(current),
+      engravingFee: suggestEngravingService(current, settings),
     }));
   }
 
@@ -835,6 +1031,7 @@ export default function CalculatorPage({ onSaveQuote, editingQuote, onCancelEdit
 
   function resetCalculator() {
     setForm(buildInitialForm(settings, null));
+    setDismissedCustomerKeys([]);
   }
 
   function validateCustomerInfo() {
@@ -865,6 +1062,7 @@ export default function CalculatorPage({ onSaveQuote, editingQuote, onCancelEdit
         customerPhone: form.customerPhone,
         customerEmail: form.customerEmail,
         customerAddress: form.customerAddress,
+        customerKey: form.customerKey,
         jobName: form.jobName,
         jobAspects: form.jobAspects,
         finalTotal: totals.finalTotal,
@@ -885,8 +1083,8 @@ export default function CalculatorPage({ onSaveQuote, editingQuote, onCancelEdit
             {editingQuote ? `Editing ${editingQuote.quoteNumber}` : "Calculator"}
           </h2>
           <p className="muted-text">
-            Competitive high-side estimates with customer contact info, settings-driven CAD tiers,
-            material costs, integration pricing, minimums, curved buffer, and market checks.
+            Settings-driven quote builder with active modules, nozzles, materials,
+            customer recognition, minimums, and PDFs.
           </p>
 
           {editingQuote && (
@@ -906,37 +1104,66 @@ export default function CalculatorPage({ onSaveQuote, editingQuote, onCancelEdit
         <div className="form-card full-span">
           <h3 className="card-title">Customer Info</h3>
 
+          {customers.length > 0 && (
+            <div className="form-grid">
+              <label className="field">
+                <span>Select Existing Customer</span>
+                <select
+                  value={form.customerKey}
+                  onChange={(event) => {
+                    const selected = customers.find((customer) => customer.key === event.target.value);
+                    if (selected) applyCustomer(selected);
+                    else update("customerKey", "");
+                  }}
+                >
+                  <option value="">New / Unsaved Customer</option>
+                  {customers.map((customer) => (
+                    <option key={customer.key} value={customer.key}>
+                      {customer.name} {customer.phone ? `— ${customer.phone}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          )}
+
+          {bestCustomerMatch && (
+            <div className="customer-match-popover">
+              <div>
+                <strong>Possible existing customer found</strong>
+                <span>
+                  {bestCustomerMatch.name}
+                  {bestCustomerMatch.phone ? ` • ${bestCustomerMatch.phone}` : ""}
+                  {bestCustomerMatch.email ? ` • ${bestCustomerMatch.email}` : ""}
+                </span>
+              </div>
+
+              <div className="customer-match-actions">
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={() => applyCustomer(bestCustomerMatch)}
+                >
+                  <UserCheck size={18} />
+                  Autofill
+                </button>
+
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => dismissCustomerMatch(bestCustomerMatch.key)}
+                >
+                  Ignore
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="form-grid">
-            <Field
-              label="Customer Name"
-              type="text"
-              value={form.customerName}
-              required={settings.customerFields.requireName}
-              onChange={(value) => update("customerName", value)}
-            />
-
-            <Field
-              label="Phone Number"
-              type="tel"
-              value={form.customerPhone}
-              required={settings.customerFields.requirePhone}
-              onChange={(value) => update("customerPhone", value)}
-            />
-
-            <Field
-              label="Email"
-              type="email"
-              value={form.customerEmail}
-              required={settings.customerFields.requireEmail}
-              onChange={(value) => update("customerEmail", value)}
-            />
-
-            <Field
-              label="Job Name"
-              type="text"
-              value={form.jobName}
-              onChange={(value) => update("jobName", value)}
-            />
+            <Field label="Customer Name" type="text" value={form.customerName} required={settings.customerFields.requireName} onChange={(value) => update("customerName", value)} />
+            <Field label="Phone Number" type="tel" value={form.customerPhone} required={settings.customerFields.requirePhone} onChange={(value) => update("customerPhone", value)} />
+            <Field label="Email" type="email" value={form.customerEmail} required={settings.customerFields.requireEmail} onChange={(value) => update("customerEmail", value)} />
+            <Field label="Job Name" type="text" value={form.jobName} onChange={(value) => update("jobName", value)} />
           </div>
 
           {settings.customerFields.showAddress && (
@@ -986,26 +1213,16 @@ export default function CalculatorPage({ onSaveQuote, editingQuote, onCancelEdit
                 <select value={form.cadPresetId} onChange={(event) => update("cadPresetId", event.target.value)}>
                   {activeCadPresets.map((preset) => (
                     <option key={preset.id} value={preset.id}>
-                      {preset.amount > 0
-                        ? `${preset.label} — ${money(preset.amount)}`
-                        : preset.label}
+                      {preset.amount > 0 ? `${preset.label} — ${money(preset.amount)}` : preset.label}
                     </option>
                   ))}
                 </select>
               </label>
 
               {selectedCadPreset.id === "custom" && (
-                <Field
-                  label="Custom CAD Amount"
-                  value={form.customCadAmount}
-                  onChange={(value) => update("customCadAmount", value)}
-                />
+                <Field label="Custom CAD Amount" value={form.customCadAmount} onChange={(value) => update("customCadAmount", value)} />
               )}
             </div>
-
-            <p className="helper-note">
-              CAD tiers are controlled in Settings. Actual CAD time can still be tracked later on the job timesheet.
-            </p>
           </div>
         )}
 
@@ -1015,7 +1232,7 @@ export default function CalculatorPage({ onSaveQuote, editingQuote, onCancelEdit
               <div>
                 <h3 className="card-title">3D Print Runs</h3>
                 <p className="muted-text">
-                  Add each printer/nozzle/material combo separately. Material costs now pull from Settings.
+                  Printers and nozzles are controlled in Settings.
                 </p>
               </div>
 
@@ -1028,8 +1245,8 @@ export default function CalculatorPage({ onSaveQuote, editingQuote, onCancelEdit
             <div className="vinyl-lines">
               {form.printRuns.map((run, index) => {
                 const material = getById(activePrintMaterials, run.materialId);
-                const nozzle = getNozzle(run.nozzleSize);
-                const printer = getPrinter(run.printerId);
+                const nozzle = getNozzle(settings, run.nozzleSize);
+                const printer = getPrinterModule(settings, run.printerId);
                 const runMaterialCost = roundUpMoney(num(run.materialGrams) * num(material.costPerGram));
                 const runMachineCost = roundUpMoney(num(run.machineHours) * num(run.machineRate));
                 const tierId = suggestedSetupTier(material, nozzle);
@@ -1044,9 +1261,9 @@ export default function CalculatorPage({ onSaveQuote, editingQuote, onCancelEdit
 
                     <div className="form-grid">
                       <label className="field">
-                        <span>Printer</span>
+                        <span>Printer / Module</span>
                         <select value={run.printerId} onChange={(event) => updatePrintRun(run.id, "printerId", event.target.value)}>
-                          {PRINTERS.map((printerOption) => (
+                          {activePrinters.map((printerOption) => (
                             <option key={printerOption.id} value={printerOption.id}>
                               {printerOption.label}
                             </option>
@@ -1068,7 +1285,7 @@ export default function CalculatorPage({ onSaveQuote, editingQuote, onCancelEdit
                       <label className="field">
                         <span>Nozzle / Quality</span>
                         <select value={run.nozzleSize} onChange={(event) => updatePrintRun(run.id, "nozzleSize", event.target.value)}>
-                          {NOZZLES.map((nozzleOption) => (
+                          {activeNozzles.map((nozzleOption) => (
                             <option key={nozzleOption.id} value={nozzleOption.id}>
                               {nozzleOption.label}
                             </option>
@@ -1102,10 +1319,6 @@ export default function CalculatorPage({ onSaveQuote, editingQuote, onCancelEdit
                 onChange={(value) => update("printSetupOverride", value)}
               />
             </div>
-
-            <p className="helper-note">
-              Auto print setup: {money(printSetup.primarySetup)} primary + {money(printSetup.additionalSetup)} additional = {money(printSetup.totalSetup)}.
-            </p>
           </div>
         )}
 
@@ -1114,6 +1327,17 @@ export default function CalculatorPage({ onSaveQuote, editingQuote, onCancelEdit
             <h3 className="card-title">Laser Engraving</h3>
 
             <div className="form-grid">
+              <label className="field">
+                <span>Laser Module</span>
+                <select value={form.engravingModuleId} onChange={(event) => update("engravingModuleId", event.target.value)}>
+                  {activeLasers.map((module) => (
+                    <option key={module.id} value={module.id}>
+                      {module.label} — {money(settings.machineRates[module.rateKey])}/hr
+                    </option>
+                  ))}
+                </select>
+              </label>
+
               <label className="field">
                 <span>Engraving Material</span>
                 <select value={form.engravingMaterialId} onChange={(event) => updateEngravingMaterial(event.target.value)}>
@@ -1126,7 +1350,7 @@ export default function CalculatorPage({ onSaveQuote, editingQuote, onCancelEdit
               </label>
 
               <label className="field">
-                <span>Material Color</span>
+                <span>Material Finish / Color</span>
                 <select value={form.engravingMaterialColor} onChange={(event) => update("engravingMaterialColor", event.target.value)}>
                   {colorsToArray(selectedEngravingMaterial.colors).map((color) => (
                     <option key={color} value={color}>{color}</option>
@@ -1154,6 +1378,10 @@ export default function CalculatorPage({ onSaveQuote, editingQuote, onCancelEdit
                 Use Suggested {money(suggestedEngravingFee)}
               </button>
             </div>
+
+            <p className="helper-note">
+              Selected module: {selectedEngravingModule.label}. Metals like titanium and stainless steel can be added or edited in Settings.
+            </p>
           </div>
         )}
 
@@ -1163,7 +1391,7 @@ export default function CalculatorPage({ onSaveQuote, editingQuote, onCancelEdit
               <div>
                 <h3 className="card-title">Vinyl Cutting Materials</h3>
                 <p className="muted-text">
-                  Add each vinyl layer, color, transfer tape, or specialty sheet used.
+                  Cutter modules and vinyl materials are controlled in Settings.
                 </p>
               </div>
 
@@ -1172,6 +1400,21 @@ export default function CalculatorPage({ onSaveQuote, editingQuote, onCancelEdit
                 Add Material
               </button>
             </div>
+
+            <div className="form-grid single-row-gap">
+              <label className="field">
+                <span>Cutter Module</span>
+                <select value={form.vinylModuleId} onChange={(event) => update("vinylModuleId", event.target.value)}>
+                  {activeCutters.map((module) => (
+                    <option key={module.id} value={module.id}>
+                      {module.label} — {money(settings.machineRates[module.rateKey])}/hr
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <p className="helper-note">Selected cutter: {selectedVinylModule.label}</p>
 
             <div className="vinyl-lines">
               {form.vinylMaterialLines.map((line, index) => {
@@ -1289,10 +1532,6 @@ export default function CalculatorPage({ onSaveQuote, editingQuote, onCancelEdit
             <Field label="CAD + Print Minimum" value={form.cadPrintMinimum} onChange={(value) => update("cadPrintMinimum", value)} />
             <Field label="Suggested Deposit %" value={form.depositPercent} onChange={(value) => update("depositPercent", value)} />
           </div>
-
-          <p className="helper-note">
-            Auto buffer is controlled in Settings. Currently applied: {totals.appliedBufferPercent}%.
-          </p>
         </div>
 
         <div className="form-card">

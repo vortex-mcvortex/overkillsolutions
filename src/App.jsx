@@ -6,6 +6,7 @@ import {
   Hammer,
   Settings,
   CreditCard,
+  Users,
 } from "lucide-react";
 
 import CalculatorPage from "./components/CalculatorPage";
@@ -14,6 +15,7 @@ import JobsPage from "./components/JobsPage";
 import PaymentsPage from "./components/PaymentsPage";
 import DashboardPage from "./components/DashboardPage";
 import SettingsPage from "./components/SettingsPage";
+import CustomersPage from "./components/CustomersPage";
 import { importOverkillPdf } from "./utils/pdfImport";
 
 import overkillLogo from "./assets/logos/overkill_main.png";
@@ -25,6 +27,7 @@ const NAV_ITEMS = [
   { id: "quotes", label: "Quotes", icon: FileText },
   { id: "jobs", label: "Jobs", icon: Hammer },
   { id: "payments", label: "Payments", icon: CreditCard },
+  { id: "customers", label: "Customers", icon: Users },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 
@@ -63,6 +66,12 @@ export default function App() {
   const [activePage, setActivePage] = useState("dashboard");
   const [quotes, setQuotes] = useState(() => getInitialState("overkill_quotes", []));
   const [jobs, setJobs] = useState(() => getInitialState("overkill_jobs", []));
+  const [customerOverrides, setCustomerOverrides] = useState(() =>
+    getInitialState("overkill_customer_overrides", {})
+  );
+  const [manualCustomers, setManualCustomers] = useState(() =>
+    getInitialState("overkill_manual_customers", [])
+  );
   const [usedRecordNumbers, setUsedRecordNumbers] = useState(() =>
     getInitialState("overkill_used_record_numbers", [])
   );
@@ -75,9 +84,72 @@ export default function App() {
   function saveToStorage(nextQuotes, nextJobs, nextUsedNumbers) {
     localStorage.setItem("overkill_quotes", JSON.stringify(nextQuotes));
     localStorage.setItem("overkill_jobs", JSON.stringify(nextJobs));
-    localStorage.setItem(
-      "overkill_used_record_numbers",
-      JSON.stringify(nextUsedNumbers)
+    localStorage.setItem("overkill_used_record_numbers", JSON.stringify(nextUsedNumbers));
+  }
+
+  function saveCustomerOverrides(nextOverrides) {
+    setCustomerOverrides(nextOverrides);
+    localStorage.setItem("overkill_customer_overrides", JSON.stringify(nextOverrides));
+  }
+
+  function saveManualCustomers(nextCustomers) {
+    setManualCustomers(nextCustomers);
+    localStorage.setItem("overkill_manual_customers", JSON.stringify(nextCustomers));
+  }
+
+  function updateCustomerOverride(customerKey, customerData) {
+    const nextOverrides = {
+      ...customerOverrides,
+      [customerKey]: {
+        ...(customerOverrides[customerKey] || {}),
+        ...customerData,
+        updatedAt: new Date().toISOString(),
+      },
+    };
+
+    saveCustomerOverrides(nextOverrides);
+  }
+
+  function addManualCustomer(customerData) {
+    const newCustomer = {
+      id: crypto.randomUUID(),
+      key: `manual:${crypto.randomUUID()}`,
+      source: "manual",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      name: customerData.name || "New Customer",
+      phone: customerData.phone || "",
+      email: customerData.email || "",
+      address: customerData.address || "",
+      notes: customerData.notes || "",
+    };
+
+    saveManualCustomers([newCustomer, ...manualCustomers]);
+  }
+
+  function updateManualCustomer(customerKey, customerData) {
+    const nextManualCustomers = manualCustomers.map((customer) => {
+      if (customer.key !== customerKey) return customer;
+
+      return {
+        ...customer,
+        ...customerData,
+        updatedAt: new Date().toISOString(),
+      };
+    });
+
+    saveManualCustomers(nextManualCustomers);
+  }
+
+  function deleteManualCustomer(customerKey) {
+    const confirmed = window.confirm(
+      "Delete this manually created customer? This will not delete quotes or jobs."
+    );
+
+    if (!confirmed) return;
+
+    saveManualCustomers(
+      manualCustomers.filter((customer) => customer.key !== customerKey)
     );
   }
 
@@ -269,6 +341,68 @@ export default function App() {
     });
   }
 
+  function duplicateJob(jobId) {
+    const job = jobs.find((item) => item.id === jobId);
+    if (!job) return;
+
+    const confirmed = window.confirm(
+      `Duplicate ${job.jobNumber || "this job"} into a new active job?`
+    );
+
+    if (!confirmed) return;
+
+    const recordNumber = generateNextRecordNumber();
+    const now = new Date().toISOString();
+
+    const duplicatedJob = {
+      ...job,
+      id: crypto.randomUUID(),
+      recordNumber,
+      quoteId: null,
+      quoteNumber: job.quoteNumber ? `${job.quoteNumber}-COPY` : null,
+      jobNumber: `J-${recordNumber}`,
+      invoiceNumber: null,
+      status: "Approved",
+      archived: false,
+      archivedAt: null,
+      approvedAt: now,
+      createdAt: now,
+      updatedAt: now,
+      importedAt: null,
+      importedFromPdf: false,
+      lastSavedAt: null,
+      actuals: {
+        materialCost: 0,
+        failedPrintCost: 0,
+        extraCost: 0,
+        notes: "",
+      },
+      timeEvents: [],
+      paymentEvents: [],
+      payments: {
+        depositPaid: 0,
+        additionalPaid: 0,
+        paymentMethod: "Venmo",
+        paymentNotes: "",
+      },
+      jobName: `${job.jobName || "Untitled Job"} Copy`,
+      quoteSnapshot: {
+        ...(job.quoteSnapshot || {}),
+        recordNumber,
+        jobName: `${job.jobName || "Untitled Job"} Copy`,
+      },
+    };
+
+    const nextJobs = [duplicatedJob, ...jobs];
+    const nextUsedNumbers = [...usedRecordNumbers, recordNumber];
+
+    setJobs(nextJobs);
+    setUsedRecordNumbers(nextUsedNumbers);
+    setSelectedPaymentJobId(duplicatedJob.id);
+    saveToStorage(quotes, nextJobs, nextUsedNumbers);
+    setActivePage("jobs");
+  }
+
   function deleteJob(jobId) {
     const job = jobs.find((item) => item.id === jobId);
     if (!job) return;
@@ -428,6 +562,10 @@ export default function App() {
         onSaveQuote={saveQuote}
         editingQuote={editingQuote}
         onCancelEdit={cancelEditQuote}
+        quotes={quotes}
+        jobs={jobs}
+        manualCustomers={manualCustomers}
+        customerOverrides={customerOverrides}
       />
     ),
     quotes: (
@@ -447,6 +585,7 @@ export default function App() {
         onArchiveJob={archiveJob}
         onRestoreJob={restoreJob}
         onDeleteJob={deleteJob}
+        onDuplicateJob={duplicateJob}
         onImportPdf={(file) => importPdfFile(file, "job")}
         importMessage={importMessage}
       />
@@ -457,6 +596,18 @@ export default function App() {
         selectedJobId={selectedPaymentJobId}
         onSelectJob={setSelectedPaymentJobId}
         onUpdateJob={updateJob}
+      />
+    ),
+    customers: (
+      <CustomersPage
+        quotes={quotes}
+        jobs={jobs}
+        customerOverrides={customerOverrides}
+        manualCustomers={manualCustomers}
+        onUpdateCustomer={updateCustomerOverride}
+        onAddManualCustomer={addManualCustomer}
+        onUpdateManualCustomer={updateManualCustomer}
+        onDeleteManualCustomer={deleteManualCustomer}
       />
     ),
     settings: <SettingsPage />,

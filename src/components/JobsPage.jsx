@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   Plus,
   Trash2,
@@ -8,8 +8,11 @@ import {
   ChevronDown,
   Archive,
   RotateCcw,
+  Search,
+  Copy,
+  ClipboardList,
 } from "lucide-react";
-import { exportInvoicePdf } from "../utils/pdf";
+import { exportInvoicePdf, exportProductionSheetPdf } from "../utils/pdf";
 
 const PAYMENT_METHODS = ["Venmo", "Cash", "Cash App", "PayPal", "Zelle"];
 
@@ -23,6 +26,8 @@ const JOB_STATUSES = [
   "Completed",
   "Cancelled",
 ];
+
+const PAYMENT_FILTERS = ["All", "Unpaid", "Partially Paid", "Paid", "Overpaid"];
 
 const EVENT_TYPES = [
   "Machine Time",
@@ -88,6 +93,37 @@ function calculateHours(startEvent, stopEvent) {
   return diffMs / 1000 / 60 / 60;
 }
 
+function matchesJobSearch(job, searchTerm) {
+  const search = searchTerm.trim().toLowerCase();
+  if (!search) return true;
+
+  return [
+    job.jobNumber,
+    job.quoteNumber,
+    job.invoiceNumber,
+    job.customerName,
+    job.customerPhone,
+    job.customerEmail,
+    job.jobName,
+    job.status,
+    getPaymentStatus(job),
+  ]
+    .filter(Boolean)
+    .some((value) => String(value).toLowerCase().includes(search));
+}
+
+function matchesJobFilters(job, searchTerm, statusFilter, paymentFilter) {
+  const paymentStatus = getPaymentStatus(job);
+
+  const searchMatches = matchesJobSearch(job, searchTerm);
+  const statusMatches =
+    statusFilter === "All" || (job.status || "Approved") === statusFilter;
+  const paymentMatches =
+    paymentFilter === "All" || paymentStatus === paymentFilter;
+
+  return searchMatches && statusMatches && paymentMatches;
+}
+
 function Field({ label, value, onChange, type = "number", step = "0.01" }) {
   return (
     <label className="field">
@@ -150,7 +186,7 @@ function buildMachineOptions(job) {
     const printer = run.printerId || "Printer";
     const nozzle = run.nozzleSize || "Nozzle";
     const material = run.materialId || "Material";
-    const label = `Run ${runIndex + 1}: ${printer} / ${nozzle}mm / ${material}`;
+    const label = `Run ${runIndex + 1}: ${printer} / ${nozzle} / ${material}`;
 
     options.push({
       value: label,
@@ -232,15 +268,37 @@ export default function JobsPage({
   onArchiveJob,
   onRestoreJob,
   onDeleteJob,
+  onDuplicateJob,
   onImportPdf,
   importMessage,
 }) {
   const fileInputRef = useRef(null);
   const [expandedJobId, setExpandedJobId] = useState("");
   const [showArchived, setShowArchived] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("All");
+  const [paymentFilter, setPaymentFilter] = useState("All");
 
   const activeJobs = jobs.filter((job) => !job.archived);
   const archivedJobs = jobs.filter((job) => job.archived);
+
+  const filteredActiveJobs = useMemo(() => {
+    return activeJobs.filter((job) =>
+      matchesJobFilters(job, searchTerm, statusFilter, paymentFilter)
+    );
+  }, [activeJobs, searchTerm, statusFilter, paymentFilter]);
+
+  const filteredArchivedJobs = useMemo(() => {
+    return archivedJobs.filter((job) =>
+      matchesJobFilters(job, searchTerm, statusFilter, paymentFilter)
+    );
+  }, [archivedJobs, searchTerm, statusFilter, paymentFilter]);
+
+  function clearFilters() {
+    setSearchTerm("");
+    setStatusFilter("All");
+    setPaymentFilter("All");
+  }
 
   function handleImportChange(event) {
     const file = event.target.files?.[0];
@@ -497,7 +555,23 @@ export default function JobsPage({
                 onClick={() => exportInvoicePdf(job)}
               >
                 <FileDown size={18} />
-                Export Invoice PDF
+                Export Invoice
+              </button>
+
+              <button
+                className="secondary-button record-action"
+                onClick={() => exportProductionSheetPdf(job)}
+              >
+                <ClipboardList size={18} />
+                Production Sheet
+              </button>
+
+              <button
+                className="secondary-button record-action"
+                onClick={() => onDuplicateJob(job.id)}
+              >
+                <Copy size={18} />
+                Duplicate Job
               </button>
 
               {!job.archived ? (
@@ -788,7 +862,7 @@ export default function JobsPage({
         <div>
           <h2 className="section-title brand-font">Jobs</h2>
           <p className="muted-text">
-            Active work queue with expandable production logs, archiving, costs, payments, and status tracking.
+            Active work queue with expandable production logs, production sheets, job duplication, archiving, search, filters, payments, and status tracking.
           </p>
 
           {importMessage && <p className="helper-note">{importMessage}</p>}
@@ -814,10 +888,60 @@ export default function JobsPage({
         </div>
       </div>
 
+      <div className="filter-toolbar">
+        <label className="search-field">
+          <Search size={18} />
+          <input
+            type="search"
+            value={searchTerm}
+            placeholder="Search jobs by customer, job, phone, email, quote, invoice, or job number..."
+            onChange={(event) => setSearchTerm(event.target.value)}
+          />
+        </label>
+
+        <label className="filter-select-field">
+          <span>Status</span>
+          <select
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value)}
+          >
+            <option value="All">All Statuses</option>
+            {JOB_STATUSES.map((status) => (
+              <option key={status} value={status}>
+                {status}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="filter-select-field">
+          <span>Payment</span>
+          <select
+            value={paymentFilter}
+            onChange={(event) => setPaymentFilter(event.target.value)}
+          >
+            {PAYMENT_FILTERS.map((status) => (
+              <option key={status} value={status}>
+                {status === "All" ? "All Payments" : status}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <button className="secondary-button filter-clear-button" onClick={clearFilters}>
+          Clear
+        </button>
+      </div>
+
       <div className="job-queue-summary">
         <div>
           <span>Active Jobs</span>
           <strong>{activeJobs.length}</strong>
+        </div>
+
+        <div>
+          <span>Matching Active</span>
+          <strong>{filteredActiveJobs.length}</strong>
         </div>
 
         <div>
@@ -838,10 +962,15 @@ export default function JobsPage({
           <h3>No active jobs yet.</h3>
           <p>Convert an approved quote into a job to begin production tracking.</p>
         </div>
+      ) : filteredActiveJobs.length === 0 ? (
+        <div className="empty-state">
+          <h3>No matching active jobs.</h3>
+          <p>Try a different search term, job status, or payment status.</p>
+        </div>
       ) : (
         <div className="jobs-stack">
           <h3 className="card-title">Active Jobs</h3>
-          {activeJobs.map(renderJobCard)}
+          {filteredActiveJobs.map(renderJobCard)}
         </div>
       )}
 
@@ -852,7 +981,9 @@ export default function JobsPage({
           onClick={() => setShowArchived(!showArchived)}
         >
           <Archive size={18} />
-          {showArchived ? "Hide Archived Jobs" : `Show Archived Jobs (${archivedJobs.length})`}
+          {showArchived
+            ? "Hide Archived Jobs"
+            : `Show Archived Jobs (${filteredArchivedJobs.length}/${archivedJobs.length})`}
         </button>
 
         {showArchived && (
@@ -862,10 +993,15 @@ export default function JobsPage({
                 <h3>No archived jobs.</h3>
                 <p>Completed or cancelled jobs will appear here after archiving.</p>
               </div>
+            ) : filteredArchivedJobs.length === 0 ? (
+              <div className="empty-state">
+                <h3>No matching archived jobs.</h3>
+                <p>Try clearing filters or changing your search.</p>
+              </div>
             ) : (
               <>
                 <h3 className="card-title">Archived Jobs</h3>
-                {archivedJobs.map(renderJobCard)}
+                {filteredArchivedJobs.map(renderJobCard)}
               </>
             )}
           </div>

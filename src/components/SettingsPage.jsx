@@ -24,6 +24,22 @@ const DEFAULT_SETTINGS = {
     h2sCutter: 4,
   },
 
+  machineModules: [
+    { id: "p1s", label: "Bambu P1S", type: "printer", rateKey: "p1s", active: true },
+    { id: "x1c", label: "Bambu X1C", type: "printer", rateKey: "x1c", active: true },
+    { id: "h2s", label: "Bambu H2S", type: "printer", rateKey: "h2sPrint", active: true },
+    { id: "h2s-laser-10w", label: "H2S Laser — 10W", type: "laser", rateKey: "h2sLaser10w", active: true },
+    { id: "h2s-laser-40w", label: "H2S Laser — 40W", type: "laser", rateKey: "h2sLaser40w", active: true },
+    { id: "h2s-cutter", label: "H2S Cutter", type: "cutter", rateKey: "h2sCutter", active: true },
+  ],
+
+  nozzles: [
+    { id: "0.2", label: "0.2mm — Detail", diameter: 0.2, machineRateAdd: 1, marketMultiplier: 1.25, active: true },
+    { id: "0.4", label: "0.4mm — Standard", diameter: 0.4, machineRateAdd: 0, marketMultiplier: 1, active: true },
+    { id: "0.6", label: "0.6mm — Strong/Faster", diameter: 0.6, machineRateAdd: 0.25, marketMultiplier: 1.05, active: true },
+    { id: "0.8", label: "0.8mm — Heavy Duty", diameter: 0.8, machineRateAdd: 0.5, marketMultiplier: 1.1, active: true },
+  ],
+
   cadPresets: [
     { id: "basic", label: "Basic CAD", amount: 25, active: true },
     { id: "standard", label: "Standard CAD", amount: 45, active: true },
@@ -75,22 +91,13 @@ const DEFAULT_SETTINGS = {
   ],
 
   engravingMaterials: [
-    { id: "none", label: "None / Customer Provided", packCost: 0, packCount: 1, colors: "N/A", active: true },
-    { id: "aluminum-card", label: "Aluminum Card", packCost: 3.89, packCount: 1, colors: "Black, Silver, Red, Blue, Gold, Rainbow", active: true },
-    { id: "stainless-round-tag", label: "Round Stainless Steel Tag", packCost: 6.89, packCount: 5, colors: "Stainless", active: true },
-    { id: "basswood-2mm", label: "2mm Basswood Plywood", packCost: 13.89, packCount: 6, colors: "Natural", active: true },
-    { id: "basswood-3mm", label: "3mm Basswood Plywood", packCost: 14.89, packCount: 6, colors: "Natural", active: true },
-    { id: "bamboo-3mm", label: "3mm Bamboo Board", packCost: 28.89, packCount: 6, colors: "Natural Bamboo", active: true },
-    { id: "birch-3mm", label: "3mm Birch Plywood", packCost: 31.89, packCount: 6, colors: "Natural Birch", active: true },
-    { id: "sapele-3mm", label: "3mm Sapele Plywood", packCost: 33.89, packCount: 6, colors: "Sapele", active: true },
-    { id: "black-walnut-3mm", label: "3mm Black Walnut Plywood", packCost: 30.89, packCount: 6, colors: "Black Walnut", active: true },
-    { id: "cork-2mm", label: "2mm Cork Sheet", packCost: 8.89, packCount: 4, colors: "Natural Cork", active: true },
-    { id: "acrylic-opaque-glossy", label: "3mm Opaque Glossy Acrylic", packCost: 17.89, packCount: 3, colors: "Black, Red, Orange, Yellow, Green", active: true },
-    { id: "pu-leatherette", label: "Pebbled PU Leatherette Fabric", packCost: 14.89, packCount: 5, colors: "Black, White, Brown, Gray", active: true },
-    { id: "pu-iron-on-patch", label: "Rectangular PU Iron-on Patch", packCost: 12.89, packCount: 10, colors: "Black", active: true },
-    { id: "cardstock-250g", label: "250g Cardstock", packCost: 6.89, packCount: 25, colors: "Black", active: true },
-    { id: "kraft-paper-a4", label: "A4 200g Kraft Paper", packCost: 4.89, packCount: 25, colors: "Kraft Brown", active: true },
-    { id: "greeting-card", label: "Pearlescent White Greeting Card Set", packCost: 5.89, packCount: 2, colors: "Pearlescent White", active: true },
+    { id: "none", label: "None / Customer Provided", packCost: 0, packCount: 1, colors: "N/A", materialType: "customer-provided", active: true },
+    { id: "aluminum-card", label: "Aluminum Card", packCost: 3.89, packCount: 1, colors: "Black, Silver, Red, Blue, Gold, Rainbow", materialType: "metal", active: true },
+    { id: "stainless-steel", label: "Stainless Steel", packCost: 0, packCount: 1, colors: "Raw Stainless", materialType: "metal", active: true },
+    { id: "titanium", label: "Titanium", packCost: 0, packCount: 1, colors: "Raw Titanium", materialType: "metal", active: true },
+    { id: "basswood-2mm", label: "2mm Basswood Plywood", packCost: 13.89, packCount: 6, colors: "Natural", materialType: "wood", active: true },
+    { id: "basswood-3mm", label: "3mm Basswood Plywood", packCost: 14.89, packCount: 6, colors: "Natural", materialType: "wood", active: true },
+    { id: "acrylic-opaque-glossy", label: "3mm Opaque Glossy Acrylic", packCost: 17.89, packCount: 3, colors: "Black, Red, Orange, Yellow, Green", materialType: "acrylic", active: true },
   ],
 
   vinylMaterials: [
@@ -98,10 +105,8 @@ const DEFAULT_SETTINGS = {
     { id: "matte-removable-vinyl", label: "Matte Removable Vinyl", packCost: 9.89, packCount: 10, colors: "Black, Red, Orange, Yellow, Green, Blue, Silver, White", active: true },
     { id: "carbon-fiber-removable-vinyl", label: "Carbon Fiber Textured Removable Vinyl", packCost: 9.89, packCount: 10, colors: "Black Carbon Fiber", active: true },
     { id: "printable-vinyl-paper", label: "White Matte Printable Vinyl Sticker Paper", packCost: 8.89, packCount: 25, colors: "White", active: true },
-    { id: "reflective-decal-sheet", label: "Light Gray Reflective Decal Sheet", packCost: 9.89, packCount: 5, colors: "Light Gray Reflective", active: true },
     { id: "transfer-tape", label: "Transfer Tape", packCost: 7.89, packCount: 10, colors: "Clear Grid", active: true },
     { id: "matte-heat-transfer-vinyl", label: "Matte Heat Transfer Vinyl", packCost: 10.89, packCount: 10, colors: "Black, Red, Pink, Orange, Yellow, Cream, Green, Blue, Gray, White", active: true },
-    { id: "chrome-heat-transfer-vinyl", label: "Chrome Foil Heat Transfer Vinyl", packCost: 16.89, packCount: 10, colors: "Chrome Silver", active: true },
   ],
 
   paymentMethods: ["Venmo", "Cash", "Cash App", "PayPal", "Zelle"],
@@ -126,6 +131,8 @@ function mergeSettings(saved) {
     ...saved,
     customerFields: { ...DEFAULT_SETTINGS.customerFields, ...(saved?.customerFields || {}) },
     machineRates: { ...DEFAULT_SETTINGS.machineRates, ...(saved?.machineRates || {}) },
+    machineModules: saved?.machineModules || DEFAULT_SETTINGS.machineModules,
+    nozzles: saved?.nozzles || DEFAULT_SETTINGS.nozzles,
     cadPresets: normalizeCadPresets(saved?.cadPresets),
     setupFees: { ...DEFAULT_SETTINGS.setupFees, ...(saved?.setupFees || {}) },
     integrationCharges: { ...DEFAULT_SETTINGS.integrationCharges, ...(saved?.integrationCharges || {}) },
@@ -214,111 +221,93 @@ export default function SettingsPage() {
     update("paymentMethods", methods);
   }
 
-  function updateCadPreset(presetId, key, value) {
+  function updateArrayItem(section, itemId, key, value) {
     setSettings((current) => ({
       ...current,
-      cadPresets: current.cadPresets.map((preset) => {
-        if (preset.id !== presetId) return preset;
+      [section]: current[section].map((item) => {
+        if (item.id !== itemId) return item;
 
-        const nextPreset = {
-          ...preset,
+        const nextItem = {
+          ...item,
           [key]: value,
         };
 
         if (key === "label") {
-          nextPreset.id = makeId(value);
+          nextItem.id = makeId(value);
         }
 
-        return nextPreset;
+        return nextItem;
       }),
     }));
   }
 
-  function addCadPreset() {
-    const newPreset = {
-      id: `new-cad-tier-${Date.now()}`,
-      label: "New CAD Tier",
-      amount: 0,
-      active: true,
-    };
-
+  function addArrayItem(section, template) {
     setSettings((current) => ({
       ...current,
-      cadPresets: [...current.cadPresets, newPreset],
+      [section]: [...current[section], template],
     }));
   }
 
-  function removeCadPreset(presetId) {
-    const confirmed = window.confirm("Delete this CAD tier?");
-
+  function removeArrayItem(section, itemId, label = "item") {
+    const confirmed = window.confirm(`Delete this ${label}?`);
     if (!confirmed) return;
 
     setSettings((current) => ({
       ...current,
-      cadPresets: current.cadPresets.filter((preset) => preset.id !== presetId),
+      [section]: current[section].filter((item) => item.id !== itemId),
     }));
   }
 
-  function updateMaterial(section, materialId, key, value) {
-    setSettings((current) => ({
-      ...current,
-      [section]: current[section].map((material) => {
-        if (material.id !== materialId) return material;
+  function addCadPreset() {
+    addArrayItem("cadPresets", {
+      id: `new-cad-tier-${Date.now()}`,
+      label: "New CAD Tier",
+      amount: 0,
+      active: true,
+    });
+  }
 
-        const nextMaterial = {
-          ...material,
-          [key]: value,
-        };
+  function addMachineModule() {
+    addArrayItem("machineModules", {
+      id: `new-module-${Date.now()}`,
+      label: "New Machine / Module",
+      type: "printer",
+      rateKey: "p1s",
+      active: true,
+    });
+  }
 
-        if (key === "label") {
-          nextMaterial.id = makeId(value);
-        }
-
-        return nextMaterial;
-      }),
-    }));
+  function addNozzle() {
+    addArrayItem("nozzles", {
+      id: `new-nozzle-${Date.now()}`,
+      label: "New Nozzle",
+      diameter: 0.4,
+      machineRateAdd: 0,
+      marketMultiplier: 1,
+      active: true,
+    });
   }
 
   function addPrintMaterial() {
-    const newMaterial = {
+    addArrayItem("printMaterials", {
       id: `new-print-material-${Date.now()}`,
       label: "New Print Material",
       costPerGram: 0.03,
       group: "standard",
       active: true,
-    };
-
-    setSettings((current) => ({
-      ...current,
-      printMaterials: [...current.printMaterials, newMaterial],
-    }));
+    });
   }
 
   function addSheetMaterial(section) {
-    const newMaterial = {
+    addArrayItem(section, {
       id: `new-sheet-material-${Date.now()}`,
       label: "New Material",
       packCost: 0,
       packCount: 1,
       colors: "Black, White",
+      materialType: "custom",
       active: true,
-    };
-
-    setSettings((current) => ({
-      ...current,
-      [section]: [...current[section], newMaterial],
-    }));
-  }
-
-  function removeMaterial(section, materialId) {
-    const confirmed = window.confirm("Delete this material from settings?");
-
-    if (!confirmed) return;
-
-    setSettings((current) => ({
-      ...current,
-      [section]: current[section].filter((material) => material.id !== materialId),
-    }));
+    });
   }
 
   function saveSettings() {
@@ -328,7 +317,7 @@ export default function SettingsPage() {
 
   function resetSettings() {
     const confirmed = window.confirm(
-      "Reset settings back to Overkill defaults? This will also reset material lists."
+      "Reset settings back to Overkill defaults? This will also reset material/module/nozzle lists."
     );
 
     if (!confirmed) return;
@@ -344,7 +333,7 @@ export default function SettingsPage() {
         <div>
           <h2 className="section-title brand-font">Settings</h2>
           <p className="muted-text">
-            Persistent app defaults for customer info, rates, materials, CAD tiers, minimums, integration charges, and PDFs.
+            Persistent defaults for customer info, rates, modules, nozzles, materials, CAD tiers, minimums, and PDFs.
           </p>
 
           {saveMessage && <p className="helper-note">{saveMessage}</p>}
@@ -474,6 +463,84 @@ export default function SettingsPage() {
 
         <div className="form-card full-span">
           <MaterialHeader
+            title="Machine Modules"
+            description="Control which printers, lasers, and cutter modules appear in the calculator and production logs."
+            onAdd={addMachineModule}
+          />
+
+          <div className="material-settings-list">
+            {settings.machineModules.map((module) => (
+              <div className="material-settings-row" key={module.id}>
+                <div className="form-grid material-settings-grid">
+                  <Field label="Module Name" type="text" value={module.label} onChange={(value) => updateArrayItem("machineModules", module.id, "label", value)} />
+
+                  <label className="field">
+                    <span>Module Type</span>
+                    <select value={module.type} onChange={(event) => updateArrayItem("machineModules", module.id, "type", event.target.value)}>
+                      <option value="printer">Printer</option>
+                      <option value="laser">Laser</option>
+                      <option value="cutter">Cutter</option>
+                      <option value="other">Other</option>
+                    </select>
+                  </label>
+
+                  <label className="field">
+                    <span>Rate Key</span>
+                    <select value={module.rateKey} onChange={(event) => updateArrayItem("machineModules", module.id, "rateKey", event.target.value)}>
+                      {Object.keys(settings.machineRates).map((rateKey) => (
+                        <option key={rateKey} value={rateKey}>{rateKey}</option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="field checkbox-field material-active-field">
+                    <input type="checkbox" checked={Boolean(module.active)} onChange={(event) => updateArrayItem("machineModules", module.id, "active", event.target.checked)} />
+                    <span>Active</span>
+                  </label>
+
+                  <button className="secondary-button danger-button" type="button" onClick={() => removeArrayItem("machineModules", module.id, "module")}>
+                    <Trash2 size={18} />
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="form-card full-span">
+          <MaterialHeader
+            title="Nozzles"
+            description="Control which nozzle options are active and how they affect machine rate and market estimate."
+            onAdd={addNozzle}
+          />
+
+          <div className="material-settings-list">
+            {settings.nozzles.map((nozzle) => (
+              <div className="material-settings-row" key={nozzle.id}>
+                <div className="form-grid material-settings-grid">
+                  <Field label="Nozzle Label" type="text" value={nozzle.label} onChange={(value) => updateArrayItem("nozzles", nozzle.id, "label", value)} />
+                  <Field label="Diameter" value={nozzle.diameter} onChange={(value) => updateArrayItem("nozzles", nozzle.id, "diameter", value)} />
+                  <Field label="Rate Add ($/hr)" value={nozzle.machineRateAdd} onChange={(value) => updateArrayItem("nozzles", nozzle.id, "machineRateAdd", value)} />
+                  <Field label="Market Multiplier" value={nozzle.marketMultiplier} onChange={(value) => updateArrayItem("nozzles", nozzle.id, "marketMultiplier", value)} />
+
+                  <label className="field checkbox-field material-active-field">
+                    <input type="checkbox" checked={Boolean(nozzle.active)} onChange={(event) => updateArrayItem("nozzles", nozzle.id, "active", event.target.checked)} />
+                    <span>Active</span>
+                  </label>
+
+                  <button className="secondary-button danger-button" type="button" onClick={() => removeArrayItem("nozzles", nozzle.id, "nozzle")}>
+                    <Trash2 size={18} />
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="form-card full-span">
+          <MaterialHeader
             title="CAD Charge Tiers"
             description="These appear in the calculator as selectable CAD estimate levels."
             onAdd={addCadPreset}
@@ -483,15 +550,15 @@ export default function SettingsPage() {
             {settings.cadPresets.map((preset) => (
               <div className="material-settings-row" key={preset.id}>
                 <div className="form-grid material-settings-grid">
-                  <Field label="Tier Name" type="text" value={preset.label} onChange={(value) => updateCadPreset(preset.id, "label", value)} />
-                  <Field label="Amount" value={preset.amount} onChange={(value) => updateCadPreset(preset.id, "amount", value)} />
+                  <Field label="Tier Name" type="text" value={preset.label} onChange={(value) => updateArrayItem("cadPresets", preset.id, "label", value)} />
+                  <Field label="Amount" value={preset.amount} onChange={(value) => updateArrayItem("cadPresets", preset.id, "amount", value)} />
 
                   <label className="field checkbox-field material-active-field">
-                    <input type="checkbox" checked={Boolean(preset.active)} onChange={(event) => updateCadPreset(preset.id, "active", event.target.checked)} />
+                    <input type="checkbox" checked={Boolean(preset.active)} onChange={(event) => updateArrayItem("cadPresets", preset.id, "active", event.target.checked)} />
                     <span>Active</span>
                   </label>
 
-                  <button className="secondary-button danger-button" type="button" onClick={() => removeCadPreset(preset.id)}>
+                  <button className="secondary-button danger-button" type="button" onClick={() => removeArrayItem("cadPresets", preset.id, "CAD tier")}>
                     <Trash2 size={18} />
                     Delete
                   </button>
@@ -512,23 +579,23 @@ export default function SettingsPage() {
             {settings.printMaterials.map((material) => (
               <div className="material-settings-row" key={material.id}>
                 <div className="form-grid material-settings-grid">
-                  <Field label="Material Name" type="text" value={material.label} onChange={(value) => updateMaterial("printMaterials", material.id, "label", value)} />
-                  <Field label="Cost Per Gram" value={material.costPerGram} onChange={(value) => updateMaterial("printMaterials", material.id, "costPerGram", value)} />
+                  <Field label="Material Name" type="text" value={material.label} onChange={(value) => updateArrayItem("printMaterials", material.id, "label", value)} />
+                  <Field label="Cost Per Gram" value={material.costPerGram} onChange={(value) => updateArrayItem("printMaterials", material.id, "costPerGram", value)} />
 
                   <label className="field">
                     <span>Material Group</span>
-                    <select value={material.group} onChange={(event) => updateMaterial("printMaterials", material.id, "group", event.target.value)}>
+                    <select value={material.group} onChange={(event) => updateArrayItem("printMaterials", material.id, "group", event.target.value)}>
                       <option value="standard">Standard</option>
                       <option value="specialty">Specialty</option>
                     </select>
                   </label>
 
                   <label className="field checkbox-field material-active-field">
-                    <input type="checkbox" checked={Boolean(material.active)} onChange={(event) => updateMaterial("printMaterials", material.id, "active", event.target.checked)} />
+                    <input type="checkbox" checked={Boolean(material.active)} onChange={(event) => updateArrayItem("printMaterials", material.id, "active", event.target.checked)} />
                     <span>Active</span>
                   </label>
 
-                  <button className="secondary-button danger-button" type="button" onClick={() => removeMaterial("printMaterials", material.id)}>
+                  <button className="secondary-button danger-button" type="button" onClick={() => removeArrayItem("printMaterials", material.id, "print material")}>
                     <Trash2 size={18} />
                     Delete
                   </button>
@@ -541,7 +608,7 @@ export default function SettingsPage() {
         <div className="form-card full-span">
           <MaterialHeader
             title="Laser Engraving Materials"
-            description="Pack cost, pack count, and colors for material cost estimation."
+            description="Add metals like titanium/stainless steel, customer-provided items, wood, acrylic, patches, and custom blanks."
             onAdd={() => addSheetMaterial("engravingMaterials")}
           />
 
@@ -549,17 +616,30 @@ export default function SettingsPage() {
             {settings.engravingMaterials.map((material) => (
               <div className="material-settings-row" key={material.id}>
                 <div className="form-grid material-settings-grid">
-                  <Field label="Material Name" type="text" value={material.label} onChange={(value) => updateMaterial("engravingMaterials", material.id, "label", value)} />
-                  <Field label="Pack Cost" value={material.packCost} onChange={(value) => updateMaterial("engravingMaterials", material.id, "packCost", value)} />
-                  <Field label="Pack Count" value={material.packCount} step="1" onChange={(value) => updateMaterial("engravingMaterials", material.id, "packCount", value)} />
-                  <Field label="Colors" type="text" value={material.colors} onChange={(value) => updateMaterial("engravingMaterials", material.id, "colors", value)} />
+                  <Field label="Material Name" type="text" value={material.label} onChange={(value) => updateArrayItem("engravingMaterials", material.id, "label", value)} />
+                  <Field label="Pack Cost" value={material.packCost} onChange={(value) => updateArrayItem("engravingMaterials", material.id, "packCost", value)} />
+                  <Field label="Pack Count" value={material.packCount} step="1" onChange={(value) => updateArrayItem("engravingMaterials", material.id, "packCount", value)} />
+                  <Field label="Colors / Finish" type="text" value={material.colors} onChange={(value) => updateArrayItem("engravingMaterials", material.id, "colors", value)} />
+
+                  <label className="field">
+                    <span>Material Type</span>
+                    <select value={material.materialType || "custom"} onChange={(event) => updateArrayItem("engravingMaterials", material.id, "materialType", event.target.value)}>
+                      <option value="customer-provided">Customer Provided</option>
+                      <option value="metal">Metal</option>
+                      <option value="wood">Wood</option>
+                      <option value="acrylic">Acrylic</option>
+                      <option value="leather">Leather / Leatherette</option>
+                      <option value="paper">Paper / Cardstock</option>
+                      <option value="custom">Custom</option>
+                    </select>
+                  </label>
 
                   <label className="field checkbox-field material-active-field">
-                    <input type="checkbox" checked={Boolean(material.active)} onChange={(event) => updateMaterial("engravingMaterials", material.id, "active", event.target.checked)} />
+                    <input type="checkbox" checked={Boolean(material.active)} onChange={(event) => updateArrayItem("engravingMaterials", material.id, "active", event.target.checked)} />
                     <span>Active</span>
                   </label>
 
-                  <button className="secondary-button danger-button" type="button" onClick={() => removeMaterial("engravingMaterials", material.id)}>
+                  <button className="secondary-button danger-button" type="button" onClick={() => removeArrayItem("engravingMaterials", material.id, "engraving material")}>
                     <Trash2 size={18} />
                     Delete
                   </button>
@@ -580,17 +660,17 @@ export default function SettingsPage() {
             {settings.vinylMaterials.map((material) => (
               <div className="material-settings-row" key={material.id}>
                 <div className="form-grid material-settings-grid">
-                  <Field label="Material Name" type="text" value={material.label} onChange={(value) => updateMaterial("vinylMaterials", material.id, "label", value)} />
-                  <Field label="Pack Cost" value={material.packCost} onChange={(value) => updateMaterial("vinylMaterials", material.id, "packCost", value)} />
-                  <Field label="Pack Count" value={material.packCount} step="1" onChange={(value) => updateMaterial("vinylMaterials", material.id, "packCount", value)} />
-                  <Field label="Colors" type="text" value={material.colors} onChange={(value) => updateMaterial("vinylMaterials", material.id, "colors", value)} />
+                  <Field label="Material Name" type="text" value={material.label} onChange={(value) => updateArrayItem("vinylMaterials", material.id, "label", value)} />
+                  <Field label="Pack Cost" value={material.packCost} onChange={(value) => updateArrayItem("vinylMaterials", material.id, "packCost", value)} />
+                  <Field label="Pack Count" value={material.packCount} step="1" onChange={(value) => updateArrayItem("vinylMaterials", material.id, "packCount", value)} />
+                  <Field label="Colors" type="text" value={material.colors} onChange={(value) => updateArrayItem("vinylMaterials", material.id, "colors", value)} />
 
                   <label className="field checkbox-field material-active-field">
-                    <input type="checkbox" checked={Boolean(material.active)} onChange={(event) => updateMaterial("vinylMaterials", material.id, "active", event.target.checked)} />
+                    <input type="checkbox" checked={Boolean(material.active)} onChange={(event) => updateArrayItem("vinylMaterials", material.id, "active", event.target.checked)} />
                     <span>Active</span>
                   </label>
 
-                  <button className="secondary-button danger-button" type="button" onClick={() => removeMaterial("vinylMaterials", material.id)}>
+                  <button className="secondary-button danger-button" type="button" onClick={() => removeArrayItem("vinylMaterials", material.id, "vinyl material")}>
                     <Trash2 size={18} />
                     Delete
                   </button>

@@ -1,5 +1,5 @@
-import { useRef } from "react";
-import { FileDown, Pencil, Upload, Trash2 } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { FileDown, Pencil, Search, Upload, Trash2 } from "lucide-react";
 import { exportQuotePdf } from "../utils/pdf";
 
 function money(value) {
@@ -7,6 +7,23 @@ function money(value) {
     style: "currency",
     currency: "USD",
   });
+}
+
+function matchesQuoteSearch(quote, searchTerm) {
+  const search = searchTerm.trim().toLowerCase();
+
+  if (!search) return true;
+
+  return [
+    quote.quoteNumber,
+    quote.customerName,
+    quote.customerPhone,
+    quote.customerEmail,
+    quote.jobName,
+    quote.status,
+  ]
+    .filter(Boolean)
+    .some((value) => String(value).toLowerCase().includes(search));
 }
 
 export default function QuotesPage({
@@ -18,6 +35,11 @@ export default function QuotesPage({
   importMessage,
 }) {
   const fileInputRef = useRef(null);
+  const [searchTerm, setSearchTerm] = useState("");
+
+  const filteredQuotes = useMemo(() => {
+    return quotes.filter((quote) => matchesQuoteSearch(quote, searchTerm));
+  }, [quotes, searchTerm]);
 
   function handleImportChange(event) {
     const file = event.target.files?.[0];
@@ -62,14 +84,35 @@ export default function QuotesPage({
         </div>
       </div>
 
+      <div className="filter-toolbar">
+        <label className="search-field">
+          <Search size={18} />
+          <input
+            type="search"
+            value={searchTerm}
+            placeholder="Search quotes by customer, job, phone, email, or quote number..."
+            onChange={(event) => setSearchTerm(event.target.value)}
+          />
+        </label>
+
+        <div className="filter-count-pill">
+          Showing {filteredQuotes.length} of {quotes.length}
+        </div>
+      </div>
+
       {quotes.length === 0 ? (
         <div className="empty-state">
           <h3>No active quotes.</h3>
           <p>Create a quote in the calculator to begin tracking work.</p>
         </div>
+      ) : filteredQuotes.length === 0 ? (
+        <div className="empty-state">
+          <h3>No matching quotes.</h3>
+          <p>Try a different customer name, job name, phone number, email, or quote number.</p>
+        </div>
       ) : (
         <div className="records-grid">
-          {quotes.map((quote) => (
+          {filteredQuotes.map((quote) => (
             <article className="record-card" key={quote.id}>
               <div className="record-card-top">
                 <div>
