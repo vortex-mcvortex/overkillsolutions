@@ -100,6 +100,50 @@ function getInvoiceNumber(job) {
   return "INV-DRAFT";
 }
 
+function getRevisionRows(record) {
+  const rows = [];
+  const revisionNumber = Number(record.revisionNumber || 0);
+
+  if (revisionNumber > 0) {
+    rows.push(["Revision", `Revision ${revisionNumber}`]);
+  } else if (record.sourceQuoteNumber) {
+    rows.push(["Revision", "Copied Quote"]);
+  }
+
+  if (record.sourceQuoteNumber) {
+    const label = revisionNumber > 0 ? "Revised From" : "Copied From";
+    rows.push([label, record.sourceQuoteNumber]);
+  }
+
+  if (record.originalRecordNumber && record.originalRecordNumber !== record.recordNumber) {
+    rows.push(["Original Record", `Q-${record.originalRecordNumber}`]);
+  }
+
+  if (record.sourceRecordNumber && record.sourceRecordNumber !== record.recordNumber) {
+    rows.push(["Source Record", `Q-${record.sourceRecordNumber}`]);
+  }
+
+  return rows;
+}
+
+function getRevisionSummary(record) {
+  const revisionNumber = Number(record.revisionNumber || 0);
+
+  if (revisionNumber > 0 && record.sourceQuoteNumber) {
+    return `Revision ${revisionNumber} based on ${record.sourceQuoteNumber}.`;
+  }
+
+  if (revisionNumber > 0) {
+    return `Revision ${revisionNumber}.`;
+  }
+
+  if (record.sourceQuoteNumber) {
+    return `Copied from ${record.sourceQuoteNumber}.`;
+  }
+
+  return "";
+}
+
 function addFooter(doc) {
   const pageHeight = doc.internal.pageSize.getHeight();
 
@@ -140,7 +184,7 @@ function addHeader(doc, title, numberText) {
   try {
     doc.addImage(overkillMark, "PNG", 180, 8, 16, 16);
   } catch {
-    // Optional mark fallback.
+    // optional logo fallback
   }
 
   doc.setTextColor(255, 255, 255);
@@ -240,6 +284,34 @@ function buildContactRows(record) {
     rows.push(["Address", record.customerAddress || record.formData?.customerAddress || ""]);
   }
 
+  if (record.preferredContactMethod || record.formData?.preferredContactMethod) {
+    const preferredContact =
+      record.preferredContactMethod || record.formData?.preferredContactMethod;
+
+    if (preferredContact && preferredContact !== "Not Set") {
+      rows.push(["Preferred Contact", preferredContact]);
+    }
+  }
+
+  if (record.preferredPaymentMethod || record.formData?.preferredPaymentMethod) {
+    const preferredPayment =
+      record.preferredPaymentMethod || record.formData?.preferredPaymentMethod;
+
+    if (preferredPayment && preferredPayment !== "Not Set") {
+      rows.push(["Preferred Payment", preferredPayment]);
+    }
+  }
+
+  return rows;
+}
+
+function buildQueueRows(record) {
+  const rows = [];
+
+  if (record.priority) rows.push(["Priority", record.priority]);
+  if (record.dueDate) rows.push(["Due Date", record.dueDate]);
+  if (record.queueNotes) rows.push(["Queue Notes", record.queueNotes]);
+
   return rows;
 }
 
@@ -253,6 +325,8 @@ function addInfoBlock(doc, record, startY, title, numberText, extraRows = []) {
     ["Project", record.jobName || "Untitled Project"],
     ["Date", date],
     ["Services", buildAspectList(record.jobAspects)],
+    ...getRevisionRows(record),
+    ...buildQueueRows(record),
     ...extraRows,
   ];
 
@@ -432,8 +506,9 @@ function buildShippingRows(record) {
 
   if (!shipping) return [];
 
-  return [
+  const rows = [
     ["Shipping Carrier", `${shipping.carrier || "N/A"} — ${shipping.service || "N/A"}`],
+    ["Shipment Status", shipping.shipmentStatus || shipping.status || "Estimate"],
     [
       "Package",
       `${shipping.packagePreset || "Custom"} / ${shipping.length || 0} x ${
@@ -441,11 +516,28 @@ function buildShippingRows(record) {
       } x ${shipping.height || 0} in / ${shipping.billableWeight || 0} lb billable`,
     ],
     ["Carrier Quote", money(shipping.quotedShipping || 0)],
-    ["Packaging / Handling", money(num(shipping.packageCost) + num(shipping.packingMaterialCost) + num(shipping.handlingFee))],
-    ["Insurance / Signature", money(num(shipping.insurance) + num(shipping.signatureConfirmation))],
+    [
+      "Packaging / Handling",
+      money(
+        num(shipping.packageCost) +
+          num(shipping.packingMaterialCost) +
+          num(shipping.handlingFee)
+      ),
+    ],
+    [
+      "Insurance / Signature",
+      money(num(shipping.insurance) + num(shipping.signatureConfirmation)),
+    ],
     ["Shipping Add-On", money(shipping.total || 0)],
-    ["Shipping Notes", shipping.notes || "None"],
   ];
+
+  if (shipping.trackingNumber) rows.push(["Tracking Number", shipping.trackingNumber]);
+  if (shipping.trackingUrl) rows.push(["Tracking Link", shipping.trackingUrl]);
+  if (shipping.shippedDate) rows.push(["Shipped Date", shipping.shippedDate]);
+  if (shipping.deliveredDate) rows.push(["Delivered Date", shipping.deliveredDate]);
+  if (shipping.notes) rows.push(["Shipping Notes", shipping.notes]);
+
+  return rows;
 }
 
 function applyBufferToQuoteRows(totals, form, record) {
@@ -508,6 +600,16 @@ function buildProductionSummary(job) {
   const form = job.formData || job.quoteSnapshot?.formData || {};
   const rows = [];
 
+  const revisionSummary = getRevisionSummary(job);
+  if (revisionSummary) rows.push(["Quote Revision", revisionSummary]);
+
+  if (job.priority) rows.push(["Priority", job.priority]);
+  if (job.dueDate) rows.push(["Due Date", job.dueDate]);
+  if (job.queueNotes) rows.push(["Queue Notes", job.queueNotes]);
+
+  if (form.customerTags) rows.push(["Customer Tags", form.customerTags]);
+  if (form.customerNotes) rows.push(["Customer Notes", form.customerNotes]);
+
   if (form.printRuns?.length) {
     form.printRuns.forEach((run, index) => {
       rows.push([
@@ -554,6 +656,8 @@ function buildInternalChecklistRows(job) {
   const form = job.formData || job.quoteSnapshot?.formData || {};
   const rows = [
     ["☐", "Confirm customer info and scope"],
+    ["☐", "Confirm priority and due date"],
+    ["☐", "Confirm quote revision/source if this is a revised quote"],
     ["☐", "Confirm required files/designs/references are available"],
     ["☐", "Confirm material/color/module selections"],
   ];
@@ -629,15 +733,59 @@ function addShippingSectionIfNeeded(doc, record, y, documentTitle, numberText) {
   );
 }
 
+function addRevisionSectionIfNeeded(doc, record, y, documentTitle, numberText) {
+  const revisionRows = getRevisionRows(record);
+  const revisionSummary = getRevisionSummary(record);
+
+  if (revisionRows.length === 0 && !revisionSummary) return y;
+
+  y = addSectionTitle(doc, "Quote Revision / Source", y, documentTitle, numberText);
+
+  const body = [...revisionRows];
+
+  if (revisionSummary) {
+    body.push(["Summary", revisionSummary]);
+  }
+
+  return addTable(
+    doc,
+    {
+      startY: y,
+      head: [["Item", "Details"]],
+      body,
+      theme: "grid",
+      headStyles: {
+        fillColor: RED,
+        textColor: [255, 255, 255],
+      },
+      styles: {
+        fontSize: 8,
+        cellPadding: 3,
+        overflow: "linebreak",
+      },
+      columnStyles: {
+        0: { cellWidth: 45, fontStyle: "bold" },
+        1: { cellWidth: 137 },
+      },
+    },
+    documentTitle,
+    numberText
+  );
+}
+
 export function exportQuotePdf(quote) {
   const doc = new jsPDF();
 
+  const revisionNumber = Number(quote.revisionNumber || 0);
+  const revisionSuffix = revisionNumber > 0 ? ` / Revision ${revisionNumber}` : "";
   const documentTitle = "QUOTE";
-  const numberText = `Quote Number: ${quote.quoteNumber || "N/A"}`;
+  const numberText = `Quote Number: ${quote.quoteNumber || "N/A"}${revisionSuffix}`;
 
   let y = addHeader(doc, documentTitle, numberText);
 
   y = addInfoBlock(doc, quote, y, documentTitle, numberText);
+  y = addRevisionSectionIfNeeded(doc, quote, y, documentTitle, numberText);
+
   y = addSectionTitle(doc, "Quote Summary", y, documentTitle, numberText);
   y = addTotalsBox(doc, getServiceRows(quote), y, documentTitle, numberText);
 
@@ -660,13 +808,23 @@ export function exportQuotePdf(quote) {
   const form = quote.formData || {};
 
   y = addSectionTitle(doc, "Project Notes", y, documentTitle, numberText);
-  y = addWrappedText(doc, form.notes, y, documentTitle, numberText);
+
+  const notes = [
+    getRevisionSummary(quote) ? `Revision Info: ${getRevisionSummary(quote)}` : "",
+    form.customerNotes ? `Customer Notes: ${form.customerNotes}` : "",
+    form.notes ? `Project Notes: ${form.notes}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  y = addWrappedText(doc, notes || form.notes, y, documentTitle, numberText);
 
   y = addSectionTitle(doc, "Terms", y, documentTitle, numberText);
 
   const terms = [
     "This quote is an estimate based on the project details available at the time it was created.",
     "Final pricing may change if project scope, material choice, quantity, design requirements, shipping, or supply costs change.",
+    "If this quote is marked as a revision, it supersedes prior draft versions only when accepted by the customer and Overkill Solutions.",
     "Shipping estimates are based on available dimensions, package weight, carrier/service selection, and manual carrier quotes entered into the system.",
     "Custom work may require a deposit before production begins.",
     "Accepted payment methods: Cash, Venmo, Cash App, PayPal, and Zelle.",
@@ -683,8 +841,10 @@ export function exportQuotePdf(quote) {
     record: quote,
   });
 
+  const revisionFilePart = revisionNumber > 0 ? `-rev-${revisionNumber}` : "";
+
   doc.save(
-    `${safeFileName(quote.quoteNumber)}-${safeFileName(
+    `${safeFileName(quote.quoteNumber)}${revisionFilePart}-${safeFileName(
       quote.customerName
     )}-quote.pdf`
   );
@@ -694,8 +854,10 @@ export function exportInvoicePdf(job) {
   const doc = new jsPDF();
 
   const invoiceNumber = getInvoiceNumber(job);
+  const revisionNumber = Number(job.revisionNumber || job.quoteSnapshot?.revisionNumber || 0);
+  const revisionSuffix = revisionNumber > 0 ? ` / Quote Rev ${revisionNumber}` : "";
   const documentTitle = "INVOICE";
-  const numberText = `Invoice Number: ${invoiceNumber}`;
+  const numberText = `Invoice Number: ${invoiceNumber}${revisionSuffix}`;
 
   const { totalPaid, remaining, status } = getPaymentTotals(job);
 
@@ -713,6 +875,8 @@ export function exportInvoicePdf(job) {
       ["Payment Status", status],
     ]
   );
+
+  y = addRevisionSectionIfNeeded(doc, job, y, documentTitle, numberText);
 
   y = addSectionTitle(doc, "Invoice Summary", y, documentTitle, numberText);
 
@@ -807,8 +971,10 @@ export function exportInvoicePdf(job) {
     record: job,
   });
 
+  const revisionFilePart = revisionNumber > 0 ? `-quote-rev-${revisionNumber}` : "";
+
   doc.save(
-    `${safeFileName(invoiceNumber)}-${safeFileName(
+    `${safeFileName(invoiceNumber)}${revisionFilePart}-${safeFileName(
       job.customerName
     )}-invoice.pdf`
   );
@@ -817,8 +983,11 @@ export function exportInvoicePdf(job) {
 export function exportProductionSheetPdf(job) {
   const doc = new jsPDF();
 
+  const revisionNumber = Number(job.revisionNumber || job.quoteSnapshot?.revisionNumber || 0);
+  const revisionSuffix = revisionNumber > 0 ? ` / Quote Rev ${revisionNumber}` : "";
+
   const documentTitle = "PRODUCTION SHEET";
-  const numberText = `Job Number: ${job.jobNumber || "N/A"}`;
+  const numberText = `Job Number: ${job.jobNumber || "N/A"}${revisionSuffix}`;
   const form = job.formData || job.quoteSnapshot?.formData || {};
   const invoiceNumber = getInvoiceNumber(job);
 
@@ -837,6 +1006,8 @@ export function exportProductionSheetPdf(job) {
       ["Internal Use", "Not a customer invoice"],
     ]
   );
+
+  y = addRevisionSectionIfNeeded(doc, job, y, documentTitle, numberText);
 
   y = addSectionTitle(doc, "Production Scope", y, documentTitle, numberText);
 
@@ -935,7 +1106,11 @@ export function exportProductionSheetPdf(job) {
   y = addWrappedText(
     doc,
     [
+      getRevisionSummary(job) ? `Revision Info: ${getRevisionSummary(job)}` : "",
+      form.customerNotes ? `Customer Notes: ${form.customerNotes}` : "",
+      form.customerTags ? `Customer Tags: ${form.customerTags}` : "",
       form.notes ? `Quote Notes: ${form.notes}` : "",
+      job.queueNotes ? `Queue Notes: ${job.queueNotes}` : "",
       job.actuals?.notes ? `Actual Notes: ${job.actuals.notes}` : "",
       job.payments?.paymentNotes ? `Payment Notes: ${job.payments.paymentNotes}` : "",
       getShippingEstimate(job)?.notes
@@ -959,8 +1134,10 @@ export function exportProductionSheetPdf(job) {
     record: job,
   });
 
+  const revisionFilePart = revisionNumber > 0 ? `-quote-rev-${revisionNumber}` : "";
+
   doc.save(
-    `${safeFileName(job.jobNumber)}-${safeFileName(
+    `${safeFileName(job.jobNumber)}${revisionFilePart}-${safeFileName(
       job.customerName
     )}-production-sheet.pdf`
   );

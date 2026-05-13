@@ -9,6 +9,9 @@ import {
   XCircle,
 } from "lucide-react";
 
+const CONTACT_METHODS = ["Not Set", "Phone", "Text", "Email", "Facebook", "In Person"];
+const PAYMENT_METHODS = ["Not Set", "Venmo", "Cash", "Cash App", "PayPal", "Zelle", "Card", "Check"];
+
 function money(value) {
   return Number(value || 0).toLocaleString("en-US", {
     style: "currency",
@@ -44,6 +47,9 @@ function getCustomerInfo(record) {
     email: clean(record.customerEmail || record.formData?.customerEmail),
     address: clean(record.customerAddress || record.formData?.customerAddress),
     notes: "",
+    tags: "",
+    preferredContactMethod: "Not Set",
+    preferredPaymentMethod: "Not Set",
   };
 }
 
@@ -63,32 +69,47 @@ function formatPhone(value) {
   return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
 }
 
+function normalizeCustomerRecord(customer) {
+  return {
+    ...customer,
+    tags: customer.tags || "",
+    preferredContactMethod: customer.preferredContactMethod || "Not Set",
+    preferredPaymentMethod: customer.preferredPaymentMethod || "Not Set",
+    notes: customer.notes || "",
+  };
+}
+
 function buildCustomers(quotes, jobs, customerOverrides = {}, manualCustomers = []) {
   const map = new Map();
 
   manualCustomers.forEach((manualCustomer) => {
-    map.set(manualCustomer.key, {
-      key: manualCustomer.key,
+    const normalized = normalizeCustomerRecord(manualCustomer);
+
+    map.set(normalized.key, {
+      key: normalized.key,
       source: "manual",
-      name: manualCustomer.name || "Manual Customer",
-      phone: manualCustomer.phone || "",
-      email: manualCustomer.email || "",
-      address: manualCustomer.address || "",
-      notes: manualCustomer.notes || "",
+      name: normalized.name || "Manual Customer",
+      phone: normalized.phone || "",
+      email: normalized.email || "",
+      address: normalized.address || "",
+      notes: normalized.notes || "",
+      tags: normalized.tags || "",
+      preferredContactMethod: normalized.preferredContactMethod || "Not Set",
+      preferredPaymentMethod: normalized.preferredPaymentMethod || "Not Set",
       quotes: [],
       jobs: [],
       totalQuoted: 0,
       totalJobValue: 0,
       totalPaid: 0,
       outstanding: 0,
-      latestActivity: manualCustomer.updatedAt || manualCustomer.createdAt || "",
+      latestActivity: normalized.updatedAt || normalized.createdAt || "",
     });
   });
 
   function ensureCustomer(record) {
     const key = customerKey(record);
     const info = getCustomerInfo(record);
-    const override = customerOverrides[key] || {};
+    const override = normalizeCustomerRecord(customerOverrides[key] || {});
 
     if (!map.has(key)) {
       map.set(key, {
@@ -113,6 +134,15 @@ function buildCustomers(quotes, jobs, customerOverrides = {}, manualCustomers = 
     customer.email = override.email || customer.email || info.email;
     customer.address = override.address || customer.address || info.address;
     customer.notes = override.notes || customer.notes || "";
+    customer.tags = override.tags || customer.tags || "";
+    customer.preferredContactMethod =
+      override.preferredContactMethod ||
+      customer.preferredContactMethod ||
+      "Not Set";
+    customer.preferredPaymentMethod =
+      override.preferredPaymentMethod ||
+      customer.preferredPaymentMethod ||
+      "Not Set";
 
     const recordDate = record.updatedAt || record.createdAt || record.approvedAt || "";
     if (recordDate && (!customer.latestActivity || new Date(recordDate) > new Date(customer.latestActivity))) {
@@ -145,6 +175,13 @@ function buildCustomers(quotes, jobs, customerOverrides = {}, manualCustomers = 
   });
 }
 
+function splitTags(tags) {
+  return String(tags || "")
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+}
+
 function matchesCustomerSearch(customer, searchTerm) {
   const search = searchTerm.trim().toLowerCase();
 
@@ -156,6 +193,9 @@ function matchesCustomerSearch(customer, searchTerm) {
     customer.email,
     customer.address,
     customer.notes,
+    customer.tags,
+    customer.preferredContactMethod,
+    customer.preferredPaymentMethod,
     customer.source,
   ];
 
@@ -171,6 +211,9 @@ function matchesCustomerSearch(customer, searchTerm) {
     job.invoiceNumber,
     job.jobName,
     job.status,
+    job.priority,
+    job.dueDate,
+    job.queueNotes,
   ]);
 
   return [...baseFields, ...quoteFields, ...jobFields]
@@ -202,6 +245,9 @@ const EMPTY_CUSTOMER_DRAFT = {
   email: "",
   address: "",
   notes: "",
+  tags: "",
+  preferredContactMethod: "Not Set",
+  preferredPaymentMethod: "Not Set",
 };
 
 export default function CustomersPage({
@@ -231,6 +277,19 @@ export default function CustomersPage({
       matchesCustomerSearch(customer, searchTerm)
     );
   }, [customers, searchTerm]);
+
+  const totalCustomerJobValue = customers.reduce(
+    (sum, customer) => sum + customer.totalJobValue,
+    0
+  );
+
+  const totalOutstanding = customers.reduce(
+    (sum, customer) => sum + customer.outstanding,
+    0
+  );
+
+  const taggedCustomers = customers.filter((customer) => splitTags(customer.tags).length > 0);
+  const repeatCustomers = customers.filter((customer) => customer.jobs.length > 1);
 
   function startCreateCustomer() {
     setIsCreatingCustomer(true);
@@ -269,6 +328,9 @@ export default function CustomersPage({
       email: customer.email || "",
       address: customer.address || "",
       notes: customer.notes || "",
+      tags: customer.tags || "",
+      preferredContactMethod: customer.preferredContactMethod || "Not Set",
+      preferredPaymentMethod: customer.preferredPaymentMethod || "Not Set",
     });
   }
 
@@ -307,13 +369,96 @@ export default function CustomersPage({
     onDeleteManualCustomer(customer.key);
   }
 
+  function renderCustomerForm(draft, updateFn) {
+    return (
+      <>
+        <div className="form-grid">
+          <Field
+            label="Customer Name"
+            value={draft.name}
+            onChange={(value) => updateFn("name", value)}
+          />
+
+          <Field
+            label="Phone"
+            type="tel"
+            value={draft.phone}
+            onChange={(value) => updateFn("phone", value)}
+          />
+
+          <Field
+            label="Email"
+            type="email"
+            value={draft.email}
+            onChange={(value) => updateFn("email", value)}
+          />
+
+          <label className="field">
+            <span>Preferred Contact</span>
+            <select
+              value={draft.preferredContactMethod || "Not Set"}
+              onChange={(event) => updateFn("preferredContactMethod", event.target.value)}
+            >
+              {CONTACT_METHODS.map((method) => (
+                <option key={method} value={method}>
+                  {method}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="field">
+            <span>Preferred Payment</span>
+            <select
+              value={draft.preferredPaymentMethod || "Not Set"}
+              onChange={(event) => updateFn("preferredPaymentMethod", event.target.value)}
+            >
+              {PAYMENT_METHODS.map((method) => (
+                <option key={method} value={method}>
+                  {method}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <Field
+            label="Tags"
+            value={draft.tags || ""}
+            onChange={(value) => updateFn("tags", value)}
+          />
+        </div>
+
+        <p className="helper-note">
+          Tags are comma-separated. Example: repeat customer, rush-friendly, local pickup, picky, business client.
+        </p>
+
+        <label className="field single-row-gap">
+          <span>Address</span>
+          <textarea
+            value={draft.address}
+            onChange={(event) => updateFn("address", event.target.value)}
+          />
+        </label>
+
+        <label className="field single-row-gap">
+          <span>Customer Notes</span>
+          <textarea
+            value={draft.notes}
+            onChange={(event) => updateFn("notes", event.target.value)}
+            placeholder="Preferences, delivery notes, repeat-customer details, quote warnings, etc."
+          />
+        </label>
+      </>
+    );
+  }
+
   return (
     <section className="page-panel">
       <div className="page-heading-row">
         <div>
           <h2 className="section-title brand-font">Customers</h2>
           <p className="muted-text">
-            Editable customer database from saved quotes, jobs, and manually created records.
+            Editable customer database from saved quotes, jobs, manually created records, preferences, tags, and history.
           </p>
         </div>
 
@@ -354,44 +499,7 @@ export default function CustomersPage({
             </div>
           </div>
 
-          <div className="form-grid">
-            <Field
-              label="Customer Name"
-              value={newCustomerDraft.name}
-              onChange={(value) => updateNewCustomerDraft("name", value)}
-            />
-
-            <Field
-              label="Phone"
-              type="tel"
-              value={newCustomerDraft.phone}
-              onChange={(value) => updateNewCustomerDraft("phone", value)}
-            />
-
-            <Field
-              label="Email"
-              type="email"
-              value={newCustomerDraft.email}
-              onChange={(value) => updateNewCustomerDraft("email", value)}
-            />
-          </div>
-
-          <label className="field single-row-gap">
-            <span>Address</span>
-            <textarea
-              value={newCustomerDraft.address}
-              onChange={(event) => updateNewCustomerDraft("address", event.target.value)}
-            />
-          </label>
-
-          <label className="field single-row-gap">
-            <span>Customer Notes</span>
-            <textarea
-              value={newCustomerDraft.notes}
-              onChange={(event) => updateNewCustomerDraft("notes", event.target.value)}
-              placeholder="Preferences, delivery notes, repeat-customer details, etc."
-            />
-          </label>
+          {renderCustomerForm(newCustomerDraft, updateNewCustomerDraft)}
         </div>
       )}
 
@@ -401,7 +509,7 @@ export default function CustomersPage({
           <input
             type="search"
             value={searchTerm}
-            placeholder="Search customers by name, phone, email, address, job, quote, or invoice..."
+            placeholder="Search customers by name, phone, email, tags, preferences, address, job, quote, invoice, priority, or notes..."
             onChange={(event) => setSearchTerm(event.target.value)}
           />
         </label>
@@ -423,17 +531,23 @@ export default function CustomersPage({
         </div>
 
         <div>
+          <span>Tagged Customers</span>
+          <strong>{taggedCustomers.length}</strong>
+        </div>
+
+        <div>
+          <span>Repeat Customers</span>
+          <strong>{repeatCustomers.length}</strong>
+        </div>
+
+        <div>
           <span>Total Customer Job Value</span>
-          <strong>
-            {money(customers.reduce((sum, customer) => sum + customer.totalJobValue, 0))}
-          </strong>
+          <strong>{money(totalCustomerJobValue)}</strong>
         </div>
 
         <div>
           <span>Total Outstanding</span>
-          <strong>
-            {money(customers.reduce((sum, customer) => sum + customer.outstanding, 0))}
-          </strong>
+          <strong>{money(totalOutstanding)}</strong>
         </div>
       </div>
 
@@ -445,13 +559,14 @@ export default function CustomersPage({
       ) : filteredCustomers.length === 0 ? (
         <div className="empty-state">
           <h3>No matching customers.</h3>
-          <p>Try a different name, phone number, email, job, quote, or invoice.</p>
+          <p>Try a different name, phone number, email, tag, preference, job, quote, or invoice.</p>
         </div>
       ) : (
         <div className="customers-grid">
           {filteredCustomers.map((customer) => {
             const isExpanded = expandedCustomerKey === customer.key;
             const isEditing = editingCustomerKey === customer.key;
+            const tags = splitTags(customer.tags);
 
             return (
               <article className="customer-card" key={customer.key}>
@@ -470,6 +585,20 @@ export default function CustomersPage({
                     <strong>{customer.name}</strong>
                     <span>{customer.phone || "No phone saved"}</span>
                     <small>{customer.email || "No email saved"}</small>
+
+                    <div className="record-tags">
+                      {tags.slice(0, 4).map((tag) => (
+                        <span key={tag}>{tag}</span>
+                      ))}
+
+                      {customer.preferredContactMethod !== "Not Set" && (
+                        <span>Contact: {customer.preferredContactMethod}</span>
+                      )}
+
+                      {customer.preferredPaymentMethod !== "Not Set" && (
+                        <span>Pay: {customer.preferredPaymentMethod}</span>
+                      )}
+                    </div>
                   </div>
 
                   <div className="customer-metrics">
@@ -530,44 +659,7 @@ export default function CustomersPage({
                           </div>
                         </div>
 
-                        <div className="form-grid">
-                          <Field
-                            label="Customer Name"
-                            value={draftCustomer?.name || ""}
-                            onChange={(value) => updateDraft("name", value)}
-                          />
-
-                          <Field
-                            label="Phone"
-                            type="tel"
-                            value={draftCustomer?.phone || ""}
-                            onChange={(value) => updateDraft("phone", value)}
-                          />
-
-                          <Field
-                            label="Email"
-                            type="email"
-                            value={draftCustomer?.email || ""}
-                            onChange={(value) => updateDraft("email", value)}
-                          />
-                        </div>
-
-                        <label className="field single-row-gap">
-                          <span>Address</span>
-                          <textarea
-                            value={draftCustomer?.address || ""}
-                            onChange={(event) => updateDraft("address", event.target.value)}
-                          />
-                        </label>
-
-                        <label className="field single-row-gap">
-                          <span>Customer Notes</span>
-                          <textarea
-                            value={draftCustomer?.notes || ""}
-                            onChange={(event) => updateDraft("notes", event.target.value)}
-                            placeholder="Preferences, delivery notes, repeat-customer details, etc."
-                          />
-                        </label>
+                        {renderCustomerForm(draftCustomer || EMPTY_CUSTOMER_DRAFT, updateDraft)}
                       </div>
                     ) : (
                       <>
@@ -605,8 +697,28 @@ export default function CustomersPage({
                           </div>
 
                           <div>
+                            <span>Preferred Contact</span>
+                            <strong>{customer.preferredContactMethod || "Not Set"}</strong>
+                          </div>
+
+                          <div>
+                            <span>Preferred Payment</span>
+                            <strong>{customer.preferredPaymentMethod || "Not Set"}</strong>
+                          </div>
+
+                          <div>
                             <span>Address</span>
                             <strong>{customer.address || "Not saved"}</strong>
+                          </div>
+
+                          <div>
+                            <span>Total Quoted</span>
+                            <strong>{money(customer.totalQuoted)}</strong>
+                          </div>
+
+                          <div>
+                            <span>Total Paid</span>
+                            <strong>{money(customer.totalPaid)}</strong>
                           </div>
 
                           <div>
@@ -614,6 +726,14 @@ export default function CustomersPage({
                             <strong>{money(customer.outstanding)}</strong>
                           </div>
                         </div>
+
+                        {tags.length > 0 && (
+                          <div className="record-tags">
+                            {tags.map((tag) => (
+                              <span key={tag}>{tag}</span>
+                            ))}
+                          </div>
+                        )}
 
                         {customer.notes && (
                           <div className="customer-notes-box">
@@ -655,7 +775,15 @@ export default function CustomersPage({
                                     <div>
                                       <strong>{job.jobNumber}</strong>
                                       <span>{job.jobName || "Untitled Job"}</span>
+                                      {(job.priority || job.dueDate) && (
+                                        <small>
+                                          {job.priority ? `${job.priority} priority` : ""}
+                                          {job.priority && job.dueDate ? " • " : ""}
+                                          {job.dueDate ? `Due ${job.dueDate}` : ""}
+                                        </small>
+                                      )}
                                     </div>
+
                                     <div className="dashboard-status-stack">
                                       {job.archived && <span className="status-pill">Archived</span>}
                                       <span className="status-pill">{job.status || "Approved"}</span>

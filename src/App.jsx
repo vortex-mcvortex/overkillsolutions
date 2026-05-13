@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   LayoutDashboard,
   Calculator,
@@ -8,6 +8,8 @@ import {
   CreditCard,
   Users,
   Truck,
+  Download,
+  Upload,
 } from "lucide-react";
 
 import CalculatorPage from "./components/CalculatorPage";
@@ -23,6 +25,8 @@ import { importOverkillPdf } from "./utils/pdfImport";
 import overkillLogo from "./assets/logos/overkill_main.png";
 import overkillMark from "./assets/logos/overkill_mark.png";
 
+const APP_VERSION = "v0.1.0";
+
 const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "calculator", label: "Calculator", icon: Calculator },
@@ -33,6 +37,16 @@ const NAV_ITEMS = [
   { id: "shipping", label: "Shipping", icon: Truck },
   { id: "settings", label: "Settings", icon: Settings },
 ];
+
+const BACKUP_KEYS = {
+  quotes: "overkill_quotes",
+  jobs: "overkill_jobs",
+  shippingEstimates: "overkill_shipping_estimates",
+  customerOverrides: "overkill_customer_overrides",
+  manualCustomers: "overkill_manual_customers",
+  usedRecordNumbers: "overkill_used_record_numbers",
+  settings: "overkill_settings",
+};
 
 function money(value) {
   return Number(value || 0).toLocaleString("en-US", {
@@ -55,6 +69,10 @@ function getInitialState(key, fallback) {
   }
 }
 
+function getBackupValue(key, fallback) {
+  return getInitialState(key, fallback);
+}
+
 function parseRecordNumber(value) {
   const match = String(value || "").match(/(\d+)/);
   return match ? Number(match[1]) : null;
@@ -68,6 +86,33 @@ function normalizeImportedAspects(record) {
     vinyl: Boolean(record?.jobAspects?.vinyl),
     custom: Boolean(record?.jobAspects?.custom),
   };
+}
+
+function getDefaultExpirationDate() {
+  const date = new Date();
+  date.setDate(date.getDate() + 30);
+  return date.toISOString().slice(0, 10);
+}
+
+function getNextRevisionNumber(quotes, sourceQuote) {
+  const rootRecordNumber =
+    sourceQuote.originalRecordNumber ||
+    sourceQuote.sourceRecordNumber ||
+    sourceQuote.recordNumber;
+
+  const related = quotes.filter((quote) => {
+    return (
+      quote.recordNumber === rootRecordNumber ||
+      quote.originalRecordNumber === rootRecordNumber ||
+      quote.sourceRecordNumber === rootRecordNumber
+    );
+  });
+
+  const highestRevision = related.reduce((highest, quote) => {
+    return Math.max(highest, Number(quote.revisionNumber || 0));
+  }, 0);
+
+  return highestRevision + 1;
 }
 
 function applyShippingToRecord(record, shippingEstimate) {
@@ -100,6 +145,8 @@ function applyShippingToRecord(record, shippingEstimate) {
 }
 
 export default function App() {
+  const backupInputRef = useRef(null);
+
   const [activePage, setActivePage] = useState("dashboard");
   const [quotes, setQuotes] = useState(() => getInitialState("overkill_quotes", []));
   const [jobs, setJobs] = useState(() => getInitialState("overkill_jobs", []));
@@ -118,6 +165,7 @@ export default function App() {
   const [selectedPaymentJobId, setSelectedPaymentJobId] = useState("");
   const [editingQuoteId, setEditingQuoteId] = useState(null);
   const [importMessage, setImportMessage] = useState("");
+  const [backupMessage, setBackupMessage] = useState("");
 
   const editingQuote = quotes.find((quote) => quote.id === editingQuoteId) || null;
 
@@ -132,13 +180,134 @@ export default function App() {
     localStorage.setItem("overkill_shipping_estimates", JSON.stringify(nextEstimates));
   }
 
+  function exportBackup() {
+    const backup = {
+      app: "overkill-solutions-app",
+      version: APP_VERSION,
+      exportedAt: new Date().toISOString(),
+      data: {
+        quotes: getBackupValue(BACKUP_KEYS.quotes, []),
+        jobs: getBackupValue(BACKUP_KEYS.jobs, []),
+        shippingEstimates: getBackupValue(BACKUP_KEYS.shippingEstimates, []),
+        customerOverrides: getBackupValue(BACKUP_KEYS.customerOverrides, {}),
+        manualCustomers: getBackupValue(BACKUP_KEYS.manualCustomers, []),
+        usedRecordNumbers: getBackupValue(BACKUP_KEYS.usedRecordNumbers, []),
+        settings: getBackupValue(BACKUP_KEYS.settings, null),
+      },
+    };
+
+    const blob = new Blob([JSON.stringify(backup, null, 2)], {
+      type: "application/json",
+    });
+
+    const dateStamp = new Date().toISOString().slice(0, 10);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = `overkill-solutions-backup-${dateStamp}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    URL.revokeObjectURL(url);
+    setBackupMessage("Backup exported.");
+  }
+
+  async function importBackupFile(file) {
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+
+      if (parsed.app !== "overkill-solutions-app" || !parsed.data) {
+        window.alert("This does not look like a valid Overkill Solutions backup file.");
+        return;
+      }
+
+      const confirmed = window.confirm(
+        "Restore this backup? This will replace current local app data on this device."
+      );
+
+      if (!confirmed) return;
+
+      const data = parsed.data;
+
+      const nextQuotes = Array.isArray(data.quotes) ? data.quotes : [];
+      const nextJobs = Array.isArray(data.jobs) ? data.jobs : [];
+      const nextShippingEstimates = Array.isArray(data.shippingEstimates)
+        ? data.shippingEstimates
+        : [];
+      const nextCustomerOverrides =
+        data.customerOverrides && typeof data.customerOverrides === "object"
+          ? data.customerOverrides
+          : {};
+      const nextManualCustomers = Array.isArray(data.manualCustomers)
+        ? data.manualCustomers
+        : [];
+      const nextUsedRecordNumbers = Array.isArray(data.usedRecordNumbers)
+        ? data.usedRecordNumbers
+        : [];
+
+      localStorage.setItem(BACKUP_KEYS.quotes, JSON.stringify(nextQuotes));
+      localStorage.setItem(BACKUP_KEYS.jobs, JSON.stringify(nextJobs));
+      localStorage.setItem(
+        BACKUP_KEYS.shippingEstimates,
+        JSON.stringify(nextShippingEstimates)
+      );
+      localStorage.setItem(
+        BACKUP_KEYS.customerOverrides,
+        JSON.stringify(nextCustomerOverrides)
+      );
+      localStorage.setItem(
+        BACKUP_KEYS.manualCustomers,
+        JSON.stringify(nextManualCustomers)
+      );
+      localStorage.setItem(
+        BACKUP_KEYS.usedRecordNumbers,
+        JSON.stringify(nextUsedRecordNumbers)
+      );
+
+      if (data.settings) {
+        localStorage.setItem(BACKUP_KEYS.settings, JSON.stringify(data.settings));
+      }
+
+      setQuotes(nextQuotes);
+      setJobs(nextJobs);
+      setShippingEstimates(nextShippingEstimates);
+      setCustomerOverrides(nextCustomerOverrides);
+      setManualCustomers(nextManualCustomers);
+      setUsedRecordNumbers(nextUsedRecordNumbers);
+      setSelectedPaymentJobId("");
+      setEditingQuoteId(null);
+      setImportMessage("");
+      setBackupMessage("Backup restored. Reloading app data...");
+
+      window.location.reload();
+    } catch (error) {
+      console.error(error);
+      window.alert("Backup restore failed. The file may be damaged or not valid JSON.");
+    }
+  }
+
+  function handleBackupImportChange(event) {
+    const file = event.target.files?.[0];
+
+    if (file) {
+      importBackupFile(file);
+    }
+
+    event.target.value = "";
+  }
+
   function addShippingEstimate(estimateData) {
     const newEstimate = {
       id: crypto.randomUUID(),
       estimateNumber: `SHIP-${String(shippingEstimates.length + 1).padStart(4, "0")}`,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      status: "Estimate",
+      status: estimateData.shipmentStatus || "Estimate",
       ...estimateData,
     };
 
@@ -151,6 +320,7 @@ export default function App() {
         ? {
             ...estimate,
             ...estimateData,
+            status: estimateData.shipmentStatus || estimateData.status || estimate.status,
             updatedAt: new Date().toISOString(),
           }
         : estimate
@@ -188,6 +358,7 @@ export default function App() {
             attachedId: quoteId,
             attachedAt: new Date().toISOString(),
             status: "Attached",
+            shipmentStatus: item.shipmentStatus || "Attached",
           }
         : item
     );
@@ -213,6 +384,7 @@ export default function App() {
             attachedId: jobId,
             attachedAt: new Date().toISOString(),
             status: "Attached",
+            shipmentStatus: item.shipmentStatus || "Attached",
           }
         : item
     );
@@ -257,6 +429,9 @@ export default function App() {
       email: customerData.email || "",
       address: customerData.address || "",
       notes: customerData.notes || "",
+      tags: customerData.tags || "",
+      preferredContactMethod: customerData.preferredContactMethod || "Not Set",
+      preferredPaymentMethod: customerData.preferredPaymentMethod || "Not Set",
     };
 
     saveManualCustomers([newCustomer, ...manualCustomers]);
@@ -340,6 +515,17 @@ export default function App() {
       jobNumber: null,
       invoiceNumber: null,
       status: "Draft Quote",
+      quoteStatus: "Draft Quote",
+      revisionNumber: 0,
+      originalRecordNumber: recordNumber,
+      sourceRecordNumber: null,
+      sourceQuoteNumber: null,
+      revisionOfQuoteId: null,
+      sentAt: null,
+      approvedAt: null,
+      declinedAt: null,
+      expiredAt: null,
+      expiresAt: getDefaultExpirationDate(),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       ...quoteData,
@@ -353,6 +539,61 @@ export default function App() {
     saveToStorage(nextQuotes, jobs, nextUsedNumbers);
     setEditingQuoteId(null);
     setActivePage("quotes");
+  }
+
+  function updateQuoteWorkflow(quoteId, updates) {
+    const nextQuotes = quotes.map((quote) => {
+      if (quote.id !== quoteId) return quote;
+
+      return {
+        ...quote,
+        ...updates,
+        status: updates.quoteStatus || updates.status || quote.quoteStatus || quote.status || "Draft Quote",
+        quoteStatus: updates.quoteStatus || updates.status || quote.quoteStatus || quote.status || "Draft Quote",
+        updatedAt: new Date().toISOString(),
+      };
+    });
+
+    setQuotes(nextQuotes);
+    saveToStorage(nextQuotes, jobs, usedRecordNumbers);
+  }
+
+  function markQuoteSent(quoteId) {
+    updateQuoteWorkflow(quoteId, {
+      status: "Sent",
+      quoteStatus: "Sent",
+      sentAt: new Date().toISOString(),
+    });
+  }
+
+  function markQuoteApproved(quoteId) {
+    updateQuoteWorkflow(quoteId, {
+      status: "Approved",
+      quoteStatus: "Approved",
+      approvedAt: new Date().toISOString(),
+    });
+  }
+
+  function markQuoteDeclined(quoteId) {
+    updateQuoteWorkflow(quoteId, {
+      status: "Declined",
+      quoteStatus: "Declined",
+      declinedAt: new Date().toISOString(),
+    });
+  }
+
+  function markQuoteExpired(quoteId) {
+    updateQuoteWorkflow(quoteId, {
+      status: "Expired",
+      quoteStatus: "Expired",
+      expiredAt: new Date().toISOString(),
+    });
+  }
+
+  function updateQuoteExpiration(quoteId, expiresAt) {
+    updateQuoteWorkflow(quoteId, {
+      expiresAt,
+    });
   }
 
   function deleteQuote(quoteId) {
@@ -398,9 +639,123 @@ export default function App() {
     setActivePage("quotes");
   }
 
+  function duplicateQuote(quoteId) {
+    const quote = quotes.find((item) => item.id === quoteId);
+    if (!quote) return;
+
+    const confirmed = window.confirm(
+      `Duplicate ${quote.quoteNumber || "this quote"} into a new draft quote?`
+    );
+
+    if (!confirmed) return;
+
+    const recordNumber = generateNextRecordNumber();
+    const now = new Date().toISOString();
+
+    const duplicatedQuote = {
+      ...quote,
+      id: crypto.randomUUID(),
+      recordNumber,
+      quoteNumber: `Q-${recordNumber}`,
+      jobNumber: null,
+      invoiceNumber: null,
+      status: "Draft Quote",
+      quoteStatus: "Draft Quote",
+      revisionNumber: 0,
+      originalRecordNumber: recordNumber,
+      sourceRecordNumber: quote.recordNumber,
+      sourceQuoteNumber: quote.quoteNumber,
+      revisionOfQuoteId: null,
+      createdAt: now,
+      updatedAt: now,
+      sentAt: null,
+      approvedAt: null,
+      declinedAt: null,
+      expiredAt: null,
+      expiresAt: getDefaultExpirationDate(),
+      approvedAt: null,
+      importedAt: null,
+      importedFromPdf: false,
+      jobName: `${quote.jobName || "Untitled Job"} Copy`,
+      formData: {
+        ...(quote.formData || {}),
+        jobName: `${quote.jobName || "Untitled Job"} Copy`,
+      },
+    };
+
+    const nextQuotes = [duplicatedQuote, ...quotes];
+    const nextUsedNumbers = [...usedRecordNumbers, recordNumber];
+
+    setQuotes(nextQuotes);
+    setUsedRecordNumbers(nextUsedNumbers);
+    saveToStorage(nextQuotes, jobs, nextUsedNumbers);
+    setActivePage("quotes");
+  }
+
+  function reviseQuote(quoteId) {
+    const quote = quotes.find((item) => item.id === quoteId);
+    if (!quote) return;
+
+    const confirmed = window.confirm(
+      `Create a revised version of ${quote.quoteNumber || "this quote"}?`
+    );
+
+    if (!confirmed) return;
+
+    const recordNumber = generateNextRecordNumber();
+    const now = new Date().toISOString();
+    const revisionNumber = getNextRevisionNumber(quotes, quote);
+    const rootRecordNumber =
+      quote.originalRecordNumber ||
+      quote.sourceRecordNumber ||
+      quote.recordNumber;
+
+    const revisedQuote = {
+      ...quote,
+      id: crypto.randomUUID(),
+      recordNumber,
+      quoteNumber: `Q-${recordNumber}`,
+      jobNumber: null,
+      invoiceNumber: null,
+      status: "Draft Quote",
+      quoteStatus: "Draft Quote",
+      revisionNumber,
+      originalRecordNumber: rootRecordNumber,
+      sourceRecordNumber: quote.recordNumber,
+      sourceQuoteNumber: quote.quoteNumber,
+      revisionOfQuoteId: quote.id,
+      createdAt: now,
+      updatedAt: now,
+      sentAt: null,
+      approvedAt: null,
+      declinedAt: null,
+      expiredAt: null,
+      expiresAt: getDefaultExpirationDate(),
+      importedAt: null,
+      importedFromPdf: false,
+      quoteSnapshot: null,
+      jobName: `${quote.jobName || "Untitled Job"} Rev ${revisionNumber}`,
+      formData: {
+        ...(quote.formData || {}),
+        jobName: `${quote.jobName || "Untitled Job"} Rev ${revisionNumber}`,
+      },
+    };
+
+    const nextQuotes = [revisedQuote, ...quotes];
+    const nextUsedNumbers = [...usedRecordNumbers, recordNumber];
+
+    setQuotes(nextQuotes);
+    setUsedRecordNumbers(nextUsedNumbers);
+    saveToStorage(nextQuotes, jobs, nextUsedNumbers);
+    setEditingQuoteId(revisedQuote.id);
+    setActivePage("calculator");
+  }
+
   function convertQuoteToJob(quoteId) {
     const quote = quotes.find((item) => item.id === quoteId);
     if (!quote) return;
+
+    const now = new Date().toISOString();
 
     const newJob = {
       ...quote,
@@ -410,9 +765,11 @@ export default function App() {
       jobNumber: `J-${quote.recordNumber}`,
       invoiceNumber: null,
       status: "Approved",
+      quoteStatus: quote.quoteStatus || quote.status || "Approved",
       archived: false,
-      approvedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      approvedAt: quote.approvedAt || now,
+      convertedAt: now,
+      updatedAt: now,
       quoteSnapshot: { ...quote },
       actuals: {
         materialCost: 0,
@@ -585,6 +942,7 @@ export default function App() {
           jobNumber,
           invoiceNumber: record.invoiceNumber || `INV-${recordNumber}`,
           status: record.status || "Approved",
+          quoteStatus: record.quoteStatus || record.status || "Approved",
           archived: Boolean(record.archived),
           archivedAt: record.archivedAt || null,
           customerName: record.customerName || "Imported Customer",
@@ -637,7 +995,18 @@ export default function App() {
         quoteNumber: `Q-${recordNumber}`,
         jobNumber: null,
         invoiceNumber: null,
-        status: record.status || "Draft Quote",
+        status: record.status || record.quoteStatus || "Draft Quote",
+        quoteStatus: record.quoteStatus || record.status || "Draft Quote",
+        revisionNumber: Number(record.revisionNumber || 0),
+        originalRecordNumber: record.originalRecordNumber || recordNumber,
+        sourceRecordNumber: record.sourceRecordNumber || null,
+        sourceQuoteNumber: record.sourceQuoteNumber || null,
+        revisionOfQuoteId: null,
+        sentAt: record.sentAt || null,
+        approvedAt: record.approvedAt || null,
+        declinedAt: record.declinedAt || null,
+        expiredAt: record.expiredAt || null,
+        expiresAt: record.expiresAt || getDefaultExpirationDate(),
         customerName: record.customerName || "Imported Customer",
         jobName: record.jobName || "Imported PDF Quote",
         jobAspects: normalizeImportedAspects(record),
@@ -707,6 +1076,14 @@ export default function App() {
       <QuotesPage
         quotes={quotes}
         onEditQuote={startEditQuote}
+        onDuplicateQuote={duplicateQuote}
+        onReviseQuote={reviseQuote}
+        onUpdateQuoteWorkflow={updateQuoteWorkflow}
+        onMarkQuoteSent={markQuoteSent}
+        onMarkQuoteApproved={markQuoteApproved}
+        onMarkQuoteDeclined={markQuoteDeclined}
+        onMarkQuoteExpired={markQuoteExpired}
+        onUpdateQuoteExpiration={updateQuoteExpiration}
         onConvertToJob={convertQuoteToJob}
         onDeleteQuote={deleteQuote}
         onImportPdf={(file) => importPdfFile(file, "quote")}
@@ -769,6 +1146,7 @@ export default function App() {
           <div>
             <div className="brand-font sidebar-title">OVERKILL</div>
             <div className="sidebar-subtitle">SOLUTIONS</div>
+            <div className="helper-note">{APP_VERSION}</div>
           </div>
         </div>
 
@@ -814,6 +1192,32 @@ export default function App() {
             <strong>{money(sidebarStats.totalJobsValue)}</strong>
           </div>
         </div>
+
+        <input
+          ref={backupInputRef}
+          className="hidden-file-input"
+          type="file"
+          accept="application/json,.json"
+          onChange={handleBackupImportChange}
+        />
+
+        <div className="sidebar-mini-stats">
+          <button className="secondary-button" type="button" onClick={exportBackup}>
+            <Download size={18} />
+            Export Backup
+          </button>
+
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => backupInputRef.current?.click()}
+          >
+            <Upload size={18} />
+            Restore Backup
+          </button>
+        </div>
+
+        {backupMessage && <p className="helper-note">{backupMessage}</p>}
       </aside>
 
       <main className="main-area">

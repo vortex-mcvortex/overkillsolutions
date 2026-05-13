@@ -26,6 +26,11 @@ const EMPTY_FORM = {
   quotedShipping: 0,
   insurance: 0,
   signatureConfirmation: 0,
+  shipmentStatus: "Estimate",
+  trackingNumber: "",
+  trackingUrl: "",
+  shippedDate: "",
+  deliveredDate: "",
   notes: "",
 };
 
@@ -44,6 +49,19 @@ const CARRIERS = {
   FedEx: ["Ground", "Express Saver", "2Day", "Priority Overnight"],
   Manual: ["Manual Quote"],
 };
+
+const SHIPMENT_STATUSES = [
+  "Estimate",
+  "Ready to Quote",
+  "Quoted",
+  "Attached",
+  "Label Needed",
+  "Label Purchased",
+  "Packed",
+  "Shipped",
+  "Delivered",
+  "Issue / Hold",
+];
 
 function money(value) {
   return Number(value || 0).toLocaleString("en-US", {
@@ -112,10 +130,35 @@ function matchesEstimateSearch(estimate, searchTerm) {
     estimate.service,
     estimate.packagePreset,
     estimate.status,
+    estimate.shipmentStatus,
+    estimate.trackingNumber,
+    estimate.trackingUrl,
+    estimate.shippedDate,
+    estimate.deliveredDate,
     estimate.notes,
   ]
     .filter(Boolean)
     .some((value) => String(value).toLowerCase().includes(search));
+}
+
+function buildCarrierTrackingUrl(carrier, trackingNumber) {
+  const tracking = String(trackingNumber || "").trim();
+
+  if (!tracking) return "";
+
+  if (carrier === "USPS") {
+    return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${encodeURIComponent(tracking)}`;
+  }
+
+  if (carrier === "UPS") {
+    return `https://www.ups.com/track?tracknum=${encodeURIComponent(tracking)}`;
+  }
+
+  if (carrier === "FedEx") {
+    return `https://www.fedex.com/fedextrack/?trknbr=${encodeURIComponent(tracking)}`;
+  }
+
+  return "";
 }
 
 export default function ShippingPage({
@@ -178,6 +221,15 @@ export default function ShippingPage({
       ...current,
       carrier: value,
       service: services[0],
+      trackingUrl: buildCarrierTrackingUrl(value, current.trackingNumber),
+    }));
+  }
+
+  function updateTrackingNumber(value) {
+    setForm((current) => ({
+      ...current,
+      trackingNumber: value,
+      trackingUrl: buildCarrierTrackingUrl(current.carrier, value),
     }));
   }
 
@@ -193,6 +245,7 @@ export default function ShippingPage({
       actualWeight,
       dimensionalWeight,
       billableWeight,
+      status: form.shipmentStatus || "Estimate",
     };
 
     if (editingId) {
@@ -223,6 +276,11 @@ export default function ShippingPage({
       quotedShipping: estimate.quotedShipping || 0,
       insurance: estimate.insurance || 0,
       signatureConfirmation: estimate.signatureConfirmation || 0,
+      shipmentStatus: estimate.shipmentStatus || estimate.status || "Estimate",
+      trackingNumber: estimate.trackingNumber || "",
+      trackingUrl: estimate.trackingUrl || "",
+      shippedDate: estimate.shippedDate || "",
+      deliveredDate: estimate.deliveredDate || "",
       notes: estimate.notes || "",
     });
   }
@@ -246,7 +304,7 @@ export default function ShippingPage({
         <div>
           <h2 className="section-title brand-font">Shipping</h2>
           <p className="muted-text">
-            Build package estimates, save shipping records, and attach shipping costs to quotes or jobs.
+            Build package estimates, save shipping records, track shipments, and attach shipping costs to quotes or jobs.
           </p>
         </div>
       </div>
@@ -315,6 +373,20 @@ export default function ShippingPage({
             </label>
 
             <label className="field">
+              <span>Shipment Status</span>
+              <select
+                value={form.shipmentStatus}
+                onChange={(event) => update("shipmentStatus", event.target.value)}
+              >
+                {SHIPMENT_STATUSES.map((status) => (
+                  <option key={status} value={status}>
+                    {status}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="field">
               <span>Package Preset</span>
               <select
                 value={form.packagePreset}
@@ -368,6 +440,36 @@ export default function ShippingPage({
               label="Signature Confirmation"
               value={form.signatureConfirmation}
               onChange={(value) => update("signatureConfirmation", value)}
+            />
+
+            <Field
+              label="Tracking Number"
+              type="text"
+              value={form.trackingNumber}
+              onChange={updateTrackingNumber}
+              placeholder="Paste carrier tracking number"
+            />
+
+            <Field
+              label="Tracking URL"
+              type="text"
+              value={form.trackingUrl}
+              onChange={(value) => update("trackingUrl", value)}
+              placeholder="Auto-filled for USPS/UPS/FedEx when possible"
+            />
+
+            <Field
+              label="Shipped Date"
+              type="date"
+              value={form.shippedDate}
+              onChange={(value) => update("shippedDate", value)}
+            />
+
+            <Field
+              label="Delivered Date"
+              type="date"
+              value={form.deliveredDate}
+              onChange={(value) => update("deliveredDate", value)}
             />
           </div>
 
@@ -455,7 +557,7 @@ export default function ShippingPage({
           <input
             type="search"
             value={searchTerm}
-            placeholder="Search shipping estimates by customer, project, carrier, service, or estimate number..."
+            placeholder="Search shipping estimates by customer, project, carrier, service, status, tracking, or estimate number..."
             onChange={(event) => setSearchTerm(event.target.value)}
           />
         </label>
@@ -480,7 +582,9 @@ export default function ShippingPage({
                   <p>{estimate.customerName || "No Customer Name"}</p>
                 </div>
 
-                <span className="status-pill">{estimate.status || "Estimate"}</span>
+                <span className="status-pill">
+                  {estimate.shipmentStatus || estimate.status || "Estimate"}
+                </span>
               </div>
 
               <div className="record-title">
@@ -509,13 +613,31 @@ export default function ShippingPage({
                   <span>Total</span>
                   <strong>{money(estimate.total)}</strong>
                 </div>
+
+                <div>
+                  <span>Tracking</span>
+                  <strong>{estimate.trackingNumber || "Not saved"}</strong>
+                </div>
+
+                <div>
+                  <span>Shipped</span>
+                  <strong>{estimate.shippedDate || "Not shipped"}</strong>
+                </div>
               </div>
 
               <div className="record-tags">
                 <span>{estimate.packagePreset}</span>
                 <span>{estimate.billableWeight || 0} lb billable</span>
+                {estimate.trackingNumber && <span>Tracking Saved</span>}
+                {estimate.deliveredDate && <span>Delivered {estimate.deliveredDate}</span>}
                 {estimate.attachedType && <span>Attached to {estimate.attachedType}</span>}
               </div>
+
+              {estimate.trackingUrl && (
+                <p className="helper-note">
+                  Tracking Link: {estimate.trackingUrl}
+                </p>
+              )}
 
               {estimate.notes && <p className="helper-note">{estimate.notes}</p>}
 

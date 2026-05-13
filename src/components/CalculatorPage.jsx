@@ -1,5 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
-import { Save, RotateCcw, Plus, Trash2, Wand2, XCircle, UserCheck } from "lucide-react";
+import {
+  Copy,
+  Save,
+  RotateCcw,
+  Plus,
+  Trash2,
+  Wand2,
+  XCircle,
+  UserCheck,
+  Star,
+} from "lucide-react";
 
 const DEFAULT_SETTINGS = {
   defaultTaxPercent: 7,
@@ -104,12 +114,25 @@ const COMPLEXITY_LEVELS = [
   { id: "complex", label: "Complex", engraving: 50, vinyl: 45 },
 ];
 
+const TEMPLATE_STORAGE_KEY = "overkill_quote_templates";
+
+const DEFAULT_TEMPLATE_DRAFT = {
+  name: "",
+  tags: "",
+  notes: "",
+  favorite: false,
+};
+
 const DEFAULT_FORM = {
   customerName: "",
   customerPhone: "",
   customerEmail: "",
   customerAddress: "",
   customerKey: "",
+  customerNotes: "",
+  customerTags: "",
+  preferredContactMethod: "Not Set",
+  preferredPaymentMethod: "Not Set",
   jobName: "",
   jobAspects: {
     cad: false,
@@ -175,6 +198,13 @@ function digitsOnly(value) {
   return String(value || "").replace(/\D/g, "");
 }
 
+function splitTags(tags) {
+  return String(tags || "")
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+}
+
 function colorsToArray(colors) {
   if (Array.isArray(colors)) return colors;
   return String(colors || "N/A")
@@ -221,6 +251,49 @@ function getSettings() {
   }
 }
 
+function getStoredTemplates() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(TEMPLATE_STORAGE_KEY) || "[]");
+    return Array.isArray(saved) ? saved : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveStoredTemplates(templates) {
+  localStorage.setItem(TEMPLATE_STORAGE_KEY, JSON.stringify(templates));
+}
+
+function stripCustomerInfo(form) {
+  return {
+    ...form,
+    customerName: "",
+    customerPhone: "",
+    customerEmail: "",
+    customerAddress: "",
+    customerKey: "",
+    customerNotes: "",
+    customerTags: "",
+    preferredContactMethod: "Not Set",
+    preferredPaymentMethod: "Not Set",
+    jobName: form.jobName || "",
+  };
+}
+
+function regenerateFormIds(form) {
+  return {
+    ...form,
+    printRuns: (form.printRuns || []).map((run) => ({
+      ...run,
+      id: crypto.randomUUID(),
+    })),
+    vinylMaterialLines: (form.vinylMaterialLines || []).map((line) => ({
+      ...line,
+      id: crypto.randomUUID(),
+    })),
+  };
+}
+
 function customerKey(record) {
   const email = clean(record.customerEmail || record.formData?.customerEmail).toLowerCase();
   const phone = digitsOnly(record.customerPhone || record.formData?.customerPhone);
@@ -242,13 +315,32 @@ function getCustomerInfo(record) {
     email: clean(record.customerEmail || record.formData?.customerEmail),
     address: clean(record.customerAddress || record.formData?.customerAddress),
     notes: "",
+    tags: "",
+    preferredContactMethod: "Not Set",
+    preferredPaymentMethod: "Not Set",
+    totalQuotes: record.quoteNumber ? 1 : 0,
+    totalJobs: record.jobNumber ? 1 : 0,
+    totalValue: num(record.finalTotal),
+    latestActivity: record.updatedAt || record.createdAt || record.approvedAt || "",
+  };
+}
+
+function normalizeCustomerData(customer = {}) {
+  return {
+    ...customer,
+    notes: customer.notes || "",
+    tags: customer.tags || "",
+    preferredContactMethod: customer.preferredContactMethod || "Not Set",
+    preferredPaymentMethod: customer.preferredPaymentMethod || "Not Set",
   };
 }
 
 function buildCustomerList(quotes = [], jobs = [], manualCustomers = [], customerOverrides = {}) {
   const map = new Map();
 
-  manualCustomers.forEach((customer) => {
+  manualCustomers.forEach((manualCustomer) => {
+    const customer = normalizeCustomerData(manualCustomer);
+
     map.set(customer.key, {
       key: customer.key,
       source: "manual",
@@ -257,20 +349,37 @@ function buildCustomerList(quotes = [], jobs = [], manualCustomers = [], custome
       email: customer.email || "",
       address: customer.address || "",
       notes: customer.notes || "",
+      tags: customer.tags || "",
+      preferredContactMethod: customer.preferredContactMethod || "Not Set",
+      preferredPaymentMethod: customer.preferredPaymentMethod || "Not Set",
+      totalQuotes: 0,
+      totalJobs: 0,
+      totalValue: 0,
+      latestActivity: customer.updatedAt || customer.createdAt || "",
     });
   });
 
   [...quotes, ...jobs].forEach((record) => {
     const info = getCustomerInfo(record);
-    const override = customerOverrides[info.key] || {};
+    const override = normalizeCustomerData(customerOverrides[info.key] || {});
 
     if (!map.has(info.key)) {
       map.set(info.key, {
         ...info,
         ...override,
+        name: override.name || info.name,
+        phone: override.phone || info.phone,
+        email: override.email || info.email,
+        address: override.address || info.address,
+        notes: override.notes || info.notes,
+        tags: override.tags || info.tags,
+        preferredContactMethod: override.preferredContactMethod || info.preferredContactMethod,
+        preferredPaymentMethod: override.preferredPaymentMethod || info.preferredPaymentMethod,
       });
     } else {
       const existing = map.get(info.key);
+      const existingDate = existing.latestActivity ? new Date(existing.latestActivity) : new Date(0);
+      const infoDate = info.latestActivity ? new Date(info.latestActivity) : new Date(0);
 
       map.set(info.key, {
         ...existing,
@@ -279,6 +388,19 @@ function buildCustomerList(quotes = [], jobs = [], manualCustomers = [], custome
         email: override.email || existing.email || info.email,
         address: override.address || existing.address || info.address,
         notes: override.notes || existing.notes || "",
+        tags: override.tags || existing.tags || "",
+        preferredContactMethod:
+          override.preferredContactMethod ||
+          existing.preferredContactMethod ||
+          "Not Set",
+        preferredPaymentMethod:
+          override.preferredPaymentMethod ||
+          existing.preferredPaymentMethod ||
+          "Not Set",
+        totalQuotes: existing.totalQuotes + info.totalQuotes,
+        totalJobs: existing.totalJobs + info.totalJobs,
+        totalValue: existing.totalValue + info.totalValue,
+        latestActivity: infoDate > existingDate ? info.latestActivity : existing.latestActivity,
       });
     }
   });
@@ -318,6 +440,29 @@ function findCustomerMatches(form, customers) {
     .filter((customer) => customer.matchScore > 0)
     .sort((a, b) => b.matchScore - a.matchScore)
     .slice(0, 3);
+}
+
+function searchCustomerMatches(searchTerm, customers) {
+  const search = clean(searchTerm).toLowerCase();
+
+  if (!search) return [];
+
+  return customers
+    .filter((customer) => {
+      return [
+        customer.name,
+        customer.phone,
+        customer.email,
+        customer.address,
+        customer.notes,
+        customer.tags,
+        customer.preferredContactMethod,
+        customer.preferredPaymentMethod,
+      ]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(search));
+    })
+    .slice(0, 8);
 }
 
 function materialUnitCost(material) {
@@ -575,6 +720,10 @@ function buildInitialForm(settings, quote = null) {
     engravingModuleId: activeLasers[0]?.id || DEFAULT_FORM.engravingModuleId,
     vinylModuleId: activeCutters[0]?.id || DEFAULT_FORM.vinylModuleId,
     ...sourceForm,
+    customerNotes: sourceForm.customerNotes || "",
+    customerTags: sourceForm.customerTags || "",
+    preferredContactMethod: sourceForm.preferredContactMethod || "Not Set",
+    preferredPaymentMethod: sourceForm.preferredPaymentMethod || "Not Set",
     printRuns:
       sourceForm.printRuns?.length > 0
         ? sourceForm.printRuns
@@ -640,18 +789,47 @@ export default function CalculatorPage({
   const [settings, setSettings] = useState(getSettings);
   const [form, setForm] = useState(() => buildInitialForm(settings, editingQuote));
   const [dismissedCustomerKeys, setDismissedCustomerKeys] = useState([]);
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [templates, setTemplates] = useState(getStoredTemplates);
+  const [templateDraft, setTemplateDraft] = useState(DEFAULT_TEMPLATE_DRAFT);
+  const [templateSearch, setTemplateSearch] = useState("");
+  const [showTemplatePanel, setShowTemplatePanel] = useState(false);
 
   useEffect(() => {
     const freshSettings = getSettings();
     setSettings(freshSettings);
     setForm(buildInitialForm(freshSettings, editingQuote));
     setDismissedCustomerKeys([]);
+    setCustomerSearch("");
   }, [editingQuote]);
 
   const customers = useMemo(
     () => buildCustomerList(quotes, jobs, manualCustomers, customerOverrides),
     [quotes, jobs, manualCustomers, customerOverrides]
   );
+
+  const filteredTemplates = useMemo(() => {
+    const search = templateSearch.trim().toLowerCase();
+
+    return [...templates]
+      .filter((template) => {
+        if (!search) return true;
+
+        return [
+          template.name,
+          template.tags,
+          template.notes,
+          template.form?.jobName,
+          template.form?.notes,
+        ]
+          .filter(Boolean)
+          .some((value) => String(value).toLowerCase().includes(search));
+      })
+      .sort((a, b) => {
+        if (a.favorite !== b.favorite) return a.favorite ? -1 : 1;
+        return new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0);
+      });
+  }, [templates, templateSearch]);
 
   const activePrintMaterials = getActiveItems(settings.printMaterials);
   const activeEngravingMaterials = getActiveItems(settings.engravingMaterials);
@@ -680,6 +858,10 @@ export default function CalculatorPage({
         !dismissedCustomerKeys.includes(customer.key)
     );
   }, [form, customers, dismissedCustomerKeys]);
+
+  const searchedCustomerMatches = useMemo(() => {
+    return searchCustomerMatches(customerSearch, customers);
+  }, [customerSearch, customers]);
 
   const bestCustomerMatch = customerMatches[0];
 
@@ -878,6 +1060,101 @@ export default function CalculatorPage({
     setForm((current) => ({ ...current, [key]: value }));
   }
 
+  function updateTemplateDraft(key, value) {
+    setTemplateDraft((current) => ({
+      ...current,
+      [key]: value,
+    }));
+  }
+
+  function saveTemplates(nextTemplates) {
+    setTemplates(nextTemplates);
+    saveStoredTemplates(nextTemplates);
+  }
+
+  function saveCurrentAsTemplate() {
+    const templateName = clean(templateDraft.name || form.jobName);
+
+    if (!templateName) {
+      window.alert("Template name is required.");
+      return;
+    }
+
+    const now = new Date().toISOString();
+
+    const newTemplate = {
+      id: crypto.randomUUID(),
+      name: templateName,
+      tags: templateDraft.tags || "",
+      notes: templateDraft.notes || "",
+      favorite: Boolean(templateDraft.favorite),
+      createdAt: now,
+      updatedAt: now,
+      form: stripCustomerInfo(form),
+    };
+
+    const nextTemplates = [newTemplate, ...templates];
+
+    saveTemplates(nextTemplates);
+    setTemplateDraft(DEFAULT_TEMPLATE_DRAFT);
+    setShowTemplatePanel(true);
+  }
+
+  function loadTemplate(template) {
+    const confirmed = window.confirm(
+      `Load template "${template.name}"? This will replace the current calculator setup, but customer info will stay blank.`
+    );
+
+    if (!confirmed) return;
+
+    const loadedForm = regenerateFormIds({
+      ...buildInitialForm(settings, null),
+      ...(template.form || {}),
+    });
+
+    setForm(stripCustomerInfo(loadedForm));
+    setCustomerSearch("");
+    setDismissedCustomerKeys([]);
+  }
+
+  function duplicateTemplate(template) {
+    const now = new Date().toISOString();
+
+    const nextTemplate = {
+      ...template,
+      id: crypto.randomUUID(),
+      name: `${template.name} Copy`,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    saveTemplates([nextTemplate, ...templates]);
+  }
+
+  function toggleTemplateFavorite(templateId) {
+    const nextTemplates = templates.map((template) =>
+      template.id === templateId
+        ? {
+            ...template,
+            favorite: !template.favorite,
+            updatedAt: new Date().toISOString(),
+          }
+        : template
+    );
+
+    saveTemplates(nextTemplates);
+  }
+
+  function deleteTemplate(templateId) {
+    const template = templates.find((item) => item.id === templateId);
+    if (!template) return;
+
+    const confirmed = window.confirm(`Delete template "${template.name}"?`);
+    if (!confirmed) return;
+
+    saveTemplates(templates.filter((item) => item.id !== templateId));
+  }
+
   function applyCustomer(customer) {
     setForm((current) => ({
       ...current,
@@ -886,8 +1163,13 @@ export default function CalculatorPage({
       customerPhone: customer.phone || current.customerPhone,
       customerEmail: customer.email || current.customerEmail,
       customerAddress: customer.address || current.customerAddress,
+      customerNotes: customer.notes || "",
+      customerTags: customer.tags || "",
+      preferredContactMethod: customer.preferredContactMethod || "Not Set",
+      preferredPaymentMethod: customer.preferredPaymentMethod || "Not Set",
     }));
 
+    setCustomerSearch(customer.name || "");
     setDismissedCustomerKeys((current) =>
       current.filter((key) => key !== customer.key)
     );
@@ -1032,6 +1314,7 @@ export default function CalculatorPage({
   function resetCalculator() {
     setForm(buildInitialForm(settings, null));
     setDismissedCustomerKeys([]);
+    setCustomerSearch("");
   }
 
   function validateCustomerInfo() {
@@ -1063,6 +1346,10 @@ export default function CalculatorPage({
         customerEmail: form.customerEmail,
         customerAddress: form.customerAddress,
         customerKey: form.customerKey,
+        customerNotes: form.customerNotes,
+        customerTags: form.customerTags,
+        preferredContactMethod: form.preferredContactMethod,
+        preferredPaymentMethod: form.preferredPaymentMethod,
         jobName: form.jobName,
         jobAspects: form.jobAspects,
         finalTotal: totals.finalTotal,
@@ -1084,7 +1371,7 @@ export default function CalculatorPage({
           </h2>
           <p className="muted-text">
             Settings-driven quote builder with active modules, nozzles, materials,
-            customer recognition, minimums, and PDFs.
+            customer recognition, reusable templates, minimums, and PDFs.
           </p>
 
           {editingQuote && (
@@ -1102,84 +1389,386 @@ export default function CalculatorPage({
 
       <div className="calculator-grid">
         <div className="form-card full-span">
+          <div className="page-heading-row">
+            <div>
+              <h3 className="card-title">Quote Templates</h3>
+              <p className="muted-text">
+                Save repeatable setups for common jobs like CAD + print, engraved cards,
+                vinyl decals, prototype quotes, or friend-price templates.
+              </p>
+            </div>
+
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => setShowTemplatePanel(!showTemplatePanel)}
+            >
+              <Star size={18} />
+              {showTemplatePanel ? "Hide Templates" : "Show Templates"}
+            </button>
+          </div>
+
+          <div className="form-grid">
+            <Field
+              label="Template Name"
+              type="text"
+              value={templateDraft.name}
+              placeholder={form.jobName || "Example: Basic PETG prototype"}
+              onChange={(value) => updateTemplateDraft("name", value)}
+            />
+
+            <Field
+              label="Template Tags"
+              type="text"
+              value={templateDraft.tags}
+              placeholder="print, prototype, engraving, friend price"
+              onChange={(value) => updateTemplateDraft("tags", value)}
+            />
+
+            <label className="field checkbox-field">
+              <input
+                type="checkbox"
+                checked={templateDraft.favorite}
+                onChange={(event) => updateTemplateDraft("favorite", event.target.checked)}
+              />
+              <span>Favorite Template</span>
+            </label>
+          </div>
+
+          <label className="field single-row-gap">
+            <span>Template Notes</span>
+            <textarea
+              value={templateDraft.notes}
+              placeholder="What this template is for, when to use it, pricing notes, etc."
+              onChange={(event) => updateTemplateDraft("notes", event.target.value)}
+            />
+          </label>
+
+          <button className="primary-button single-row-gap" onClick={saveCurrentAsTemplate}>
+            <Save size={18} />
+            Save Current Setup as Template
+          </button>
+
+          {showTemplatePanel && (
+            <div className="form-card single-row-gap">
+              <div className="page-heading-row">
+                <div>
+                  <h3 className="card-title">Saved Templates</h3>
+                  <p className="muted-text">
+                    Loading a template replaces the current calculator setup, but customer info stays blank.
+                  </p>
+                </div>
+              </div>
+
+              <label className="search-field single-row-gap">
+                <input
+                  type="search"
+                  value={templateSearch}
+                  placeholder="Search templates by name, tag, notes, or saved project name..."
+                  onChange={(event) => setTemplateSearch(event.target.value)}
+                />
+              </label>
+
+              {filteredTemplates.length === 0 ? (
+                <div className="empty-state single-row-gap">
+                  <h3>No templates found.</h3>
+                  <p>Save your current calculator setup as a template to reuse it later.</p>
+                </div>
+              ) : (
+                <div className="template-grid single-row-gap">
+                  {filteredTemplates.map((template) => (
+                    <article className="template-card" key={template.id}>
+                      <div className="record-card-top">
+                        <div>
+                          <h3>{template.name}</h3>
+                          <p>{template.form?.jobName || "Reusable quote setup"}</p>
+                        </div>
+
+                        {template.favorite && <span className="status-pill">Favorite</span>}
+                      </div>
+
+                      <div className="record-tags">
+                        {splitTags(template.tags).map((tag) => (
+                          <span key={tag}>{tag}</span>
+                        ))}
+                      </div>
+
+                      {template.notes && <p className="helper-note">{template.notes}</p>}
+
+                      <div className="record-details single-row-gap">
+                        <div>
+                          <span>Services</span>
+                          <strong>
+                            {Object.entries(template.form?.jobAspects || {})
+                              .filter(([, enabled]) => enabled)
+                              .map(([key]) => key)
+                              .join(", ") || "None"}
+                          </strong>
+                        </div>
+
+                        <div>
+                          <span>Updated</span>
+                          <strong>
+                            {template.updatedAt
+                              ? new Date(template.updatedAt).toLocaleDateString()
+                              : "Unknown"}
+                          </strong>
+                        </div>
+                      </div>
+
+                      <div className="record-button-row quote-button-row single-row-gap">
+                        <button
+                          className="primary-button"
+                          type="button"
+                          onClick={() => loadTemplate(template)}
+                        >
+                          <Copy size={18} />
+                          Load
+                        </button>
+
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          onClick={() => toggleTemplateFavorite(template.id)}
+                        >
+                          <Star size={18} />
+                          {template.favorite ? "Unfavorite" : "Favorite"}
+                        </button>
+
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          onClick={() => duplicateTemplate(template)}
+                        >
+                          <Copy size={18} />
+                          Duplicate
+                        </button>
+
+                        <button
+                          className="secondary-button danger-button"
+                          type="button"
+                          onClick={() => deleteTemplate(template.id)}
+                        >
+                          <Trash2 size={18} />
+                          Delete
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="form-card full-span">
           <h3 className="card-title">Customer Info</h3>
 
-          {customers.length > 0 && (
-            <div className="form-grid">
-              <label className="field">
-                <span>Select Existing Customer</span>
-                <select
-                  value={form.customerKey}
-                  onChange={(event) => {
-                    const selected = customers.find((customer) => customer.key === event.target.value);
-                    if (selected) applyCustomer(selected);
-                    else update("customerKey", "");
-                  }}
-                >
-                  <option value="">New / Unsaved Customer</option>
-                  {customers.map((customer) => (
-                    <option key={customer.key} value={customer.key}>
-                      {customer.name} {customer.phone ? `— ${customer.phone}` : ""}
-                    </option>
-                  ))}
-                </select>
-              </label>
+          <label className="field single-row-gap">
+            <span>Search Existing Customers</span>
+            <input
+              type="text"
+              value={customerSearch}
+              placeholder="Search by name, phone, email, tag, or customer notes..."
+              onChange={(event) => setCustomerSearch(event.target.value)}
+            />
+          </label>
+
+          {customerSearch.trim() && (
+            <div className="customer-match-dropdown">
+              {searchedCustomerMatches.length === 0 ? (
+                <div className="customer-match-empty">
+                  No customer matches found.
+                </div>
+              ) : (
+                searchedCustomerMatches.map((customer) => (
+                  <button
+                    key={customer.key}
+                    type="button"
+                    className="customer-match-card"
+                    onClick={() => applyCustomer(customer)}
+                  >
+                    <div className="customer-match-main">
+                      <strong>{customer.name}</strong>
+                      <span>
+                        {customer.phone || "No phone"} • {customer.email || "No email"}
+                      </span>
+                      <small>
+                        {customer.totalQuotes || 0} quote(s) • {customer.totalJobs || 0} job(s) • {money(customer.totalValue || 0)}
+                      </small>
+                    </div>
+
+                    <div className="record-tags">
+                      {splitTags(customer.tags).slice(0, 4).map((tag) => (
+                        <span key={tag}>{tag}</span>
+                      ))}
+
+                      {customer.preferredContactMethod !== "Not Set" && (
+                        <span>Contact: {customer.preferredContactMethod}</span>
+                      )}
+
+                      {customer.preferredPaymentMethod !== "Not Set" && (
+                        <span>Pay: {customer.preferredPaymentMethod}</span>
+                      )}
+                    </div>
+
+                    {customer.notes && (
+                      <p className="helper-note">{customer.notes}</p>
+                    )}
+                  </button>
+                ))
+              )}
             </div>
           )}
 
           {bestCustomerMatch && (
             <div className="customer-match-popover">
               <div>
-                <strong>Possible existing customer found</strong>
+                <strong>Possible repeat customer: {bestCustomerMatch.name}</strong>
                 <span>
-                  {bestCustomerMatch.name}
-                  {bestCustomerMatch.phone ? ` • ${bestCustomerMatch.phone}` : ""}
-                  {bestCustomerMatch.email ? ` • ${bestCustomerMatch.email}` : ""}
+                  {bestCustomerMatch.phone || "No phone"} •{" "}
+                  {bestCustomerMatch.email || "No email"}
                 </span>
+
+                {(bestCustomerMatch.tags ||
+                  bestCustomerMatch.preferredContactMethod !== "Not Set" ||
+                  bestCustomerMatch.preferredPaymentMethod !== "Not Set") && (
+                  <div className="record-tags single-row-gap">
+                    {splitTags(bestCustomerMatch.tags).slice(0, 4).map((tag) => (
+                      <span key={tag}>{tag}</span>
+                    ))}
+
+                    {bestCustomerMatch.preferredContactMethod !== "Not Set" && (
+                      <span>Contact: {bestCustomerMatch.preferredContactMethod}</span>
+                    )}
+
+                    {bestCustomerMatch.preferredPaymentMethod !== "Not Set" && (
+                      <span>Pay: {bestCustomerMatch.preferredPaymentMethod}</span>
+                    )}
+                  </div>
+                )}
+
+                {bestCustomerMatch.notes && (
+                  <p className="helper-note">{bestCustomerMatch.notes}</p>
+                )}
               </div>
 
               <div className="customer-match-actions">
                 <button
+                  className="secondary-button"
                   type="button"
+                  onClick={() => dismissCustomerMatch(bestCustomerMatch.key)}
+                >
+                  <XCircle size={18} />
+                  Ignore
+                </button>
+
+                <button
                   className="primary-button"
+                  type="button"
                   onClick={() => applyCustomer(bestCustomerMatch)}
                 >
                   <UserCheck size={18} />
                   Autofill
-                </button>
-
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => dismissCustomerMatch(bestCustomerMatch.key)}
-                >
-                  Ignore
                 </button>
               </div>
             </div>
           )}
 
           <div className="form-grid">
-            <Field label="Customer Name" type="text" value={form.customerName} required={settings.customerFields.requireName} onChange={(value) => update("customerName", value)} />
-            <Field label="Phone Number" type="tel" value={form.customerPhone} required={settings.customerFields.requirePhone} onChange={(value) => update("customerPhone", value)} />
-            <Field label="Email" type="email" value={form.customerEmail} required={settings.customerFields.requireEmail} onChange={(value) => update("customerEmail", value)} />
-            <Field label="Job Name" type="text" value={form.jobName} onChange={(value) => update("jobName", value)} />
+            <Field
+              label="Customer Name"
+              type="text"
+              value={form.customerName}
+              required={settings.customerFields.requireName}
+              onChange={(value) => update("customerName", value)}
+            />
+
+            <Field
+              label="Phone"
+              type="tel"
+              value={form.customerPhone}
+              required={settings.customerFields.requirePhone}
+              onChange={(value) => update("customerPhone", value)}
+            />
+
+            <Field
+              label="Email"
+              type="email"
+              value={form.customerEmail}
+              required={settings.customerFields.requireEmail}
+              onChange={(value) => update("customerEmail", value)}
+            />
+
+            <label className="field">
+              <span>Preferred Contact</span>
+              <select
+                value={form.preferredContactMethod}
+                onChange={(event) => update("preferredContactMethod", event.target.value)}
+              >
+                <option value="Not Set">Not Set</option>
+                <option value="Phone">Phone</option>
+                <option value="Text">Text</option>
+                <option value="Email">Email</option>
+                <option value="Facebook">Facebook</option>
+                <option value="In Person">In Person</option>
+              </select>
+            </label>
+
+            <label className="field">
+              <span>Preferred Payment</span>
+              <select
+                value={form.preferredPaymentMethod}
+                onChange={(event) => update("preferredPaymentMethod", event.target.value)}
+              >
+                <option value="Not Set">Not Set</option>
+                <option value="Venmo">Venmo</option>
+                <option value="Cash">Cash</option>
+                <option value="Cash App">Cash App</option>
+                <option value="PayPal">PayPal</option>
+                <option value="Zelle">Zelle</option>
+                <option value="Card">Card</option>
+                <option value="Check">Check</option>
+              </select>
+            </label>
+
+            <Field
+              label="Customer Tags"
+              type="text"
+              value={form.customerTags}
+              placeholder="repeat customer, local pickup, business client"
+              onChange={(value) => update("customerTags", value)}
+            />
+
+            {settings.customerFields.showAddress && (
+              <label className="field full-span">
+                <span>Address / Shipping Info</span>
+                <textarea
+                  value={form.customerAddress}
+                  onChange={(event) => update("customerAddress", event.target.value)}
+                />
+              </label>
+            )}
           </div>
 
-          {settings.customerFields.showAddress && (
-            <label className="field single-row-gap">
-              <span>Address / Shipping Address</span>
-              <textarea
-                value={form.customerAddress}
-                onChange={(event) => update("customerAddress", event.target.value)}
-                placeholder="Optional for local jobs, useful for delivery or future shipping estimates."
-              />
-            </label>
+          {form.customerNotes && (
+            <div className="customer-warning-box">
+              <strong>Customer Notes / Warnings</strong>
+              <p>{form.customerNotes}</p>
+            </div>
           )}
         </div>
 
-        <div className="form-card">
-          <h3 className="card-title">Job Type</h3>
+        <div className="form-card full-span">
+          <h3 className="card-title">Project Basics</h3>
+
+          <Field
+            label="Project / Job Name"
+            type="text"
+            value={form.jobName}
+            onChange={(value) => update("jobName", value)}
+            placeholder="Example: custom dash bracket, engraved card, decal set..."
+          />
 
           <div className="aspect-grid">
             {[
@@ -1187,40 +1776,45 @@ export default function CalculatorPage({
               ["printing", "3D Printing"],
               ["engraving", "Laser Engraving"],
               ["vinyl", "Vinyl Cutting"],
-              ["custom", "Custom Project"],
+              ["custom", "Custom Fabrication"],
             ].map(([key, label]) => (
               <label className="aspect-option" key={key}>
-                <input type="checkbox" checked={form.jobAspects[key]} onChange={() => toggleAspect(key)} />
+                <input
+                  type="checkbox"
+                  checked={Boolean(form.jobAspects[key])}
+                  onChange={() => toggleAspect(key)}
+                />
                 <span>{label}</span>
               </label>
             ))}
           </div>
-
-          {usesQuantity && (
-            <div className="form-grid single-row-gap">
-              <Field label="Quantity" value={form.quantity} step="1" onChange={(value) => update("quantity", value)} />
-            </div>
-          )}
         </div>
 
         {form.jobAspects.cad && (
           <div className="form-card">
-            <h3 className="card-title">CAD Modeling</h3>
+            <h3 className="card-title">CAD / Design</h3>
 
             <div className="form-grid">
               <label className="field">
-                <span>CAD Quote Tier</span>
-                <select value={form.cadPresetId} onChange={(event) => update("cadPresetId", event.target.value)}>
+                <span>CAD Tier</span>
+                <select
+                  value={form.cadPresetId}
+                  onChange={(event) => update("cadPresetId", event.target.value)}
+                >
                   {activeCadPresets.map((preset) => (
                     <option key={preset.id} value={preset.id}>
-                      {preset.amount > 0 ? `${preset.label} — ${money(preset.amount)}` : preset.label}
+                      {preset.label} — {money(preset.amount)}
                     </option>
                   ))}
                 </select>
               </label>
 
               {selectedCadPreset.id === "custom" && (
-                <Field label="Custom CAD Amount" value={form.customCadAmount} onChange={(value) => update("customCadAmount", value)} />
+                <Field
+                  label="Custom CAD Amount"
+                  value={form.customCadAmount}
+                  onChange={(value) => update("customCadAmount", value)}
+                />
               )}
             </div>
           </div>
@@ -1230,9 +1824,9 @@ export default function CalculatorPage({
           <div className="form-card full-span">
             <div className="page-heading-row">
               <div>
-                <h3 className="card-title">3D Print Runs</h3>
+                <h3 className="card-title">3D Printing</h3>
                 <p className="muted-text">
-                  Printers and nozzles are controlled in Settings.
+                  Add one print run for each unique machine/material/nozzle combo.
                 </p>
               </div>
 
@@ -1246,78 +1840,127 @@ export default function CalculatorPage({
               {form.printRuns.map((run, index) => {
                 const material = getById(activePrintMaterials, run.materialId);
                 const nozzle = getNozzle(settings, run.nozzleSize);
-                const printer = getPrinterModule(settings, run.printerId);
-                const runMaterialCost = roundUpMoney(num(run.materialGrams) * num(material.costPerGram));
-                const runMachineCost = roundUpMoney(num(run.machineHours) * num(run.machineRate));
-                const tierId = suggestedSetupTier(material, nozzle);
-                const tierAmount = settings.setupFees[tierId];
 
                 return (
                   <div className="vinyl-line" key={run.id}>
                     <div className="vinyl-line-header">
                       <strong>Print Run {index + 1}</strong>
-                      <span>{money(runMaterialCost + runMachineCost)}</span>
+                      <span>
+                        {money(num(run.materialGrams) * num(material.costPerGram) + num(run.machineHours) * num(run.machineRate))}
+                      </span>
                     </div>
 
                     <div className="form-grid">
                       <label className="field">
-                        <span>Printer / Module</span>
-                        <select value={run.printerId} onChange={(event) => updatePrintRun(run.id, "printerId", event.target.value)}>
-                          {activePrinters.map((printerOption) => (
-                            <option key={printerOption.id} value={printerOption.id}>
-                              {printerOption.label}
+                        <span>Printer</span>
+                        <select
+                          value={run.printerId}
+                          onChange={(event) =>
+                            updatePrintRun(run.id, "printerId", event.target.value)
+                          }
+                        >
+                          {activePrinters.map((printer) => (
+                            <option key={printer.id} value={printer.id}>
+                              {printer.label}
                             </option>
                           ))}
                         </select>
                       </label>
 
                       <label className="field">
-                        <span>Filament / Material</span>
-                        <select value={run.materialId} onChange={(event) => updatePrintRun(run.id, "materialId", event.target.value)}>
-                          {activePrintMaterials.map((printMaterial) => (
-                            <option key={printMaterial.id} value={printMaterial.id}>
-                              {printMaterial.label} — {money(printMaterial.costPerGram)}/g
+                        <span>Material</span>
+                        <select
+                          value={run.materialId}
+                          onChange={(event) =>
+                            updatePrintRun(run.id, "materialId", event.target.value)
+                          }
+                        >
+                          {activePrintMaterials.map((item) => (
+                            <option key={item.id} value={item.id}>
+                              {item.label} — {money(item.costPerGram)}/g
                             </option>
                           ))}
                         </select>
                       </label>
 
                       <label className="field">
-                        <span>Nozzle / Quality</span>
-                        <select value={run.nozzleSize} onChange={(event) => updatePrintRun(run.id, "nozzleSize", event.target.value)}>
-                          {activeNozzles.map((nozzleOption) => (
-                            <option key={nozzleOption.id} value={nozzleOption.id}>
-                              {nozzleOption.label}
+                        <span>Nozzle</span>
+                        <select
+                          value={run.nozzleSize}
+                          onChange={(event) =>
+                            updatePrintRun(run.id, "nozzleSize", event.target.value)
+                          }
+                        >
+                          {activeNozzles.map((item) => (
+                            <option key={item.id} value={item.id}>
+                              {item.label}
                             </option>
                           ))}
                         </select>
                       </label>
 
-                      <Field label="Estimated Weight (grams)" value={run.materialGrams} onChange={(value) => updatePrintRun(run.id, "materialGrams", value)} />
-                      <Field label="Estimated Machine Hours" value={run.machineHours} onChange={(value) => updatePrintRun(run.id, "machineHours", value)} />
-                      <Field label="Machine Rate ($/hr)" value={run.machineRate} onChange={(value) => updatePrintRun(run.id, "machineRate", value)} />
+                      <Field
+                        label="Material Grams"
+                        value={run.materialGrams}
+                        onChange={(value) =>
+                          updatePrintRun(run.id, "materialGrams", value)
+                        }
+                      />
 
-                      <button className="secondary-button danger-button" onClick={() => removePrintRun(run.id)} type="button">
+                      <Field
+                        label="Machine Hours"
+                        value={run.machineHours}
+                        onChange={(value) =>
+                          updatePrintRun(run.id, "machineHours", value)
+                        }
+                      />
+
+                      <Field
+                        label="Machine Rate"
+                        value={run.machineRate}
+                        onChange={(value) =>
+                          updatePrintRun(run.id, "machineRate", value)
+                        }
+                      />
+
+                      <button
+                        className="secondary-button danger-button"
+                        onClick={() => removePrintRun(run.id)}
+                      >
                         <Trash2 size={18} />
                         Remove
                       </button>
                     </div>
 
                     <p className="helper-note">
-                      {printer.label} • {material.label} • {nozzle.label}. Suggested setup: {tierId} / {money(tierAmount)}. {setupReason(material, nozzle)}
+                      Setup suggestion: {suggestedSetupTier(material, nozzle)} —{" "}
+                      {setupReason(material, nozzle)}
                     </p>
                   </div>
                 );
               })}
             </div>
 
-            <div className="form-grid single-row-gap">
-              <Field
-                label="Print Setup Override"
-                value={form.printSetupOverride}
-                placeholder={`${money(printSetup.totalSetup)} auto`}
-                onChange={(value) => update("printSetupOverride", value)}
-              />
+            <div className="form-card single-row-gap">
+              <h3 className="card-title">Print Setup</h3>
+
+              <div className="form-grid">
+                <Field
+                  label="Setup Override"
+                  value={form.printSetupOverride}
+                  onChange={(value) => update("printSetupOverride", value)}
+                  placeholder={`${printSetup.totalSetup}`}
+                />
+
+                <div className="summary-grid">
+                  <div>
+                    <span>Suggested Setup</span>
+                    <strong>{money(printSetup.totalSetup)}</strong>
+                  </div>
+                </div>
+              </div>
+
+              <p className="helper-note">{printSetup.explanation}</p>
             </div>
           </div>
         )}
@@ -1329,41 +1972,61 @@ export default function CalculatorPage({
             <div className="form-grid">
               <label className="field">
                 <span>Laser Module</span>
-                <select value={form.engravingModuleId} onChange={(event) => update("engravingModuleId", event.target.value)}>
+                <select
+                  value={form.engravingModuleId}
+                  onChange={(event) => update("engravingModuleId", event.target.value)}
+                >
                   {activeLasers.map((module) => (
                     <option key={module.id} value={module.id}>
-                      {module.label} — {money(settings.machineRates[module.rateKey])}/hr
+                      {module.label}
                     </option>
                   ))}
                 </select>
               </label>
 
               <label className="field">
-                <span>Engraving Material</span>
-                <select value={form.engravingMaterialId} onChange={(event) => updateEngravingMaterial(event.target.value)}>
+                <span>Material</span>
+                <select
+                  value={form.engravingMaterialId}
+                  onChange={(event) => updateEngravingMaterial(event.target.value)}
+                >
                   {activeEngravingMaterials.map((material) => (
                     <option key={material.id} value={material.id}>
-                      {material.label} — {money(materialUnitCost(material))}/unit
+                      {material.label}
                     </option>
                   ))}
                 </select>
               </label>
 
               <label className="field">
-                <span>Material Finish / Color</span>
-                <select value={form.engravingMaterialColor} onChange={(event) => update("engravingMaterialColor", event.target.value)}>
+                <span>Color / Finish</span>
+                <select
+                  value={form.engravingMaterialColor}
+                  onChange={(event) =>
+                    update("engravingMaterialColor", event.target.value)
+                  }
+                >
                   {colorsToArray(selectedEngravingMaterial.colors).map((color) => (
-                    <option key={color} value={color}>{color}</option>
+                    <option key={color} value={color}>
+                      {color}
+                    </option>
                   ))}
                 </select>
               </label>
 
-              <Field label="Material Units Used" value={form.engravingMaterialUnits} step="1" onChange={(value) => update("engravingMaterialUnits", value)} />
+              <Field
+                label="Units"
+                value={form.engravingMaterialUnits}
+                onChange={(value) => update("engravingMaterialUnits", value)}
+              />
 
               <label className="field">
-                <span>Engraving Complexity</span>
-                <select value={form.engravingComplexity} onChange={(event) => update("engravingComplexity", event.target.value)}>
-                  {COMPLEXITY_LEVELS.filter((level) => level.id !== "none").map((level) => (
+                <span>Complexity</span>
+                <select
+                  value={form.engravingComplexity}
+                  onChange={(event) => update("engravingComplexity", event.target.value)}
+                >
+                  {COMPLEXITY_LEVELS.map((level) => (
                     <option key={level.id} value={level.id}>
                       {level.label}
                     </option>
@@ -1371,70 +2034,78 @@ export default function CalculatorPage({
                 </select>
               </label>
 
-              <Field label="Engraving Service Estimate" value={form.engravingFee} onChange={(value) => update("engravingFee", value)} />
-
-              <button className="secondary-button" onClick={applySuggestedEngraving} type="button">
-                <Wand2 size={18} />
-                Use Suggested {money(suggestedEngravingFee)}
-              </button>
+              <Field
+                label="Engraving Fee"
+                value={form.engravingFee}
+                onChange={(value) => update("engravingFee", value)}
+              />
             </div>
 
+            <button className="secondary-button single-row-gap" onClick={applySuggestedEngraving}>
+              <Wand2 size={18} />
+              Use Suggested Engraving Fee ({money(suggestedEngravingFee)})
+            </button>
+
             <p className="helper-note">
-              Selected module: {selectedEngravingModule.label}. Metals like titanium and stainless steel can be added or edited in Settings.
+              Module: {selectedEngravingModule.label || "Laser"}.
             </p>
           </div>
         )}
 
         {form.jobAspects.vinyl && (
-          <div className="form-card full-span">
+          <div className="form-card">
             <div className="page-heading-row">
               <div>
-                <h3 className="card-title">Vinyl Cutting Materials</h3>
+                <h3 className="card-title">Vinyl / Cutter</h3>
                 <p className="muted-text">
-                  Cutter modules and vinyl materials are controlled in Settings.
+                  Add one material line per color/layer/material.
                 </p>
               </div>
 
               <button className="secondary-button" onClick={addVinylLine}>
                 <Plus size={18} />
-                Add Material
+                Add Line
               </button>
             </div>
 
-            <div className="form-grid single-row-gap">
-              <label className="field">
-                <span>Cutter Module</span>
-                <select value={form.vinylModuleId} onChange={(event) => update("vinylModuleId", event.target.value)}>
-                  {activeCutters.map((module) => (
-                    <option key={module.id} value={module.id}>
-                      {module.label} — {money(settings.machineRates[module.rateKey])}/hr
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
+            <label className="field single-row-gap">
+              <span>Cutter Module</span>
+              <select
+                value={form.vinylModuleId}
+                onChange={(event) => update("vinylModuleId", event.target.value)}
+              >
+                {activeCutters.map((module) => (
+                  <option key={module.id} value={module.id}>
+                    {module.label}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-            <p className="helper-note">Selected cutter: {selectedVinylModule.label}</p>
-
-            <div className="vinyl-lines">
+            <div className="vinyl-lines single-row-gap">
               {form.vinylMaterialLines.map((line, index) => {
                 const material = getById(activeVinylMaterials, line.materialId);
-                const lineCost = roundUpMoney(materialUnitCost(material) * num(line.units));
-
                 return (
                   <div className="vinyl-line" key={line.id}>
                     <div className="vinyl-line-header">
-                      <strong>Layer / Material {index + 1}</strong>
-                      <span>{money(lineCost)}</span>
+                      <strong>Vinyl Line {index + 1}</strong>
+                      <span>
+                        {money(materialUnitCost(material) * num(line.units))}
+                      </span>
                     </div>
 
                     <div className="form-grid">
                       <label className="field">
-                        <span>Vinyl Material</span>
-                        <select value={line.materialId} onChange={(event) => updateVinylLine(line.id, "materialId", event.target.value)}>
-                          {activeVinylMaterials.map((item) => (
-                            <option key={item.id} value={item.id}>
-                              {item.label} — {money(materialUnitCost(item))}/unit
+                        <span>Material</span>
+                        <select
+                          value={line.materialId}
+                          onChange={(event) =>
+                            updateVinylLine(line.id, "materialId", event.target.value)
+                          }
+                        >
+                          {activeVinylMaterials.map((materialOption) => (
+                            <option key={materialOption.id} value={materialOption.id}>
+                              {materialOption.label}
                             </option>
                           ))}
                         </select>
@@ -1442,16 +2113,30 @@ export default function CalculatorPage({
 
                       <label className="field">
                         <span>Color</span>
-                        <select value={line.color} onChange={(event) => updateVinylLine(line.id, "color", event.target.value)}>
+                        <select
+                          value={line.color}
+                          onChange={(event) =>
+                            updateVinylLine(line.id, "color", event.target.value)
+                          }
+                        >
                           {colorsToArray(material.colors).map((color) => (
-                            <option key={color} value={color}>{color}</option>
+                            <option key={color} value={color}>
+                              {color}
+                            </option>
                           ))}
                         </select>
                       </label>
 
-                      <Field label="Units Used" value={line.units} step="1" onChange={(value) => updateVinylLine(line.id, "units", value)} />
+                      <Field
+                        label="Units"
+                        value={line.units}
+                        onChange={(value) => updateVinylLine(line.id, "units", value)}
+                      />
 
-                      <button className="secondary-button danger-button" onClick={() => removeVinylLine(line.id)} type="button">
+                      <button
+                        className="secondary-button danger-button"
+                        onClick={() => removeVinylLine(line.id)}
+                      >
                         <Trash2 size={18} />
                         Remove
                       </button>
@@ -1463,9 +2148,12 @@ export default function CalculatorPage({
 
             <div className="form-grid single-row-gap">
               <label className="field">
-                <span>Vinyl Complexity</span>
-                <select value={form.vinylComplexity} onChange={(event) => update("vinylComplexity", event.target.value)}>
-                  {COMPLEXITY_LEVELS.filter((level) => level.id !== "none").map((level) => (
+                <span>Complexity</span>
+                <select
+                  value={form.vinylComplexity}
+                  onChange={(event) => update("vinylComplexity", event.target.value)}
+                >
+                  {COMPLEXITY_LEVELS.map((level) => (
                     <option key={level.id} value={level.id}>
                       {level.label}
                     </option>
@@ -1473,13 +2161,21 @@ export default function CalculatorPage({
                 </select>
               </label>
 
-              <Field label="Vinyl Service Estimate" value={form.vinylFee} onChange={(value) => update("vinylFee", value)} />
-
-              <button className="secondary-button" onClick={applySuggestedVinyl} type="button">
-                <Wand2 size={18} />
-                Use Suggested {money(suggestedVinylFee)}
-              </button>
+              <Field
+                label="Vinyl Fee"
+                value={form.vinylFee}
+                onChange={(value) => update("vinylFee", value)}
+              />
             </div>
+
+            <button className="secondary-button single-row-gap" onClick={applySuggestedVinyl}>
+              <Wand2 size={18} />
+              Use Suggested Vinyl Fee ({money(suggestedVinylFee)})
+            </button>
+
+            <p className="helper-note">
+              Module: {selectedVinylModule.label || "Cutter"}.
+            </p>
           </div>
         )}
 
@@ -1490,134 +2186,207 @@ export default function CalculatorPage({
             <div className="form-grid">
               <label className="field">
                 <span>Integration Complexity</span>
-                <select value={form.integrationComplexity} onChange={(event) => update("integrationComplexity", event.target.value)}>
+                <select
+                  value={form.integrationComplexity}
+                  onChange={(event) =>
+                    update("integrationComplexity", event.target.value)
+                  }
+                >
                   {Object.keys(settings.integrationCharges).map((key) => (
                     <option key={key} value={key}>
-                      {key.charAt(0).toUpperCase() + key.slice(1)} — {money(settings.integrationCharges[key])}
+                      {key.charAt(0).toUpperCase() + key.slice(1)} —{" "}
+                      {money(settings.integrationCharges[key])}
                     </option>
                   ))}
                 </select>
               </label>
 
-              <Field label="Integration Fee" value={form.integrationFee} onChange={(value) => update("integrationFee", value)} />
-
-              <button className="secondary-button" onClick={applySuggestedIntegration} type="button">
-                <Wand2 size={18} />
-                Use Suggested {money(suggestedIntegration)}
-              </button>
+              <Field
+                label="Integration Fee"
+                value={form.integrationFee}
+                onChange={(value) => update("integrationFee", value)}
+              />
             </div>
 
+            <button className="secondary-button single-row-gap" onClick={applySuggestedIntegration}>
+              <Wand2 size={18} />
+              Use Suggested Integration Fee ({money(suggestedIntegration)})
+            </button>
+
             <p className="helper-note">
-              Suggested integration level based on active services: {suggestedIntegrationLevel}.
+              Suggested integration level: {suggestedIntegrationLevel}.
             </p>
           </div>
         )}
 
         {form.jobAspects.custom && (
           <div className="form-card">
-            <h3 className="card-title">Custom Project</h3>
+            <h3 className="card-title">Custom Fabrication</h3>
 
-            <div className="form-grid">
-              <Field label="Custom Project Estimate" value={form.customFee} onChange={(value) => update("customFee", value)} />
-            </div>
+            <Field
+              label="Custom Fee"
+              value={form.customFee}
+              onChange={(value) => update("customFee", value)}
+            />
           </div>
         )}
 
-        <div className="form-card">
-          <h3 className="card-title">Pricing Controls</h3>
+        <div className="form-card full-span">
+          <h3 className="card-title">Quantity, Labor, Fees, Tax</h3>
 
           <div className="form-grid">
-            <Field label="Buffer Override %" value={form.bufferOverridePercent} placeholder={`${totals.autoBufferPercent}% auto`} onChange={(value) => update("bufferOverridePercent", value)} />
-            <Field label="Basic Print Minimum" value={form.basicMinimum} onChange={(value) => update("basicMinimum", value)} />
-            <Field label="CAD + Print Minimum" value={form.cadPrintMinimum} onChange={(value) => update("cadPrintMinimum", value)} />
-            <Field label="Suggested Deposit %" value={form.depositPercent} onChange={(value) => update("depositPercent", value)} />
-          </div>
-        </div>
+            {usesQuantity && (
+              <Field
+                label="Quantity"
+                value={form.quantity}
+                onChange={(value) => update("quantity", value)}
+              />
+            )}
 
-        <div className="form-card">
-          <h3 className="card-title">Labor & Adjustments</h3>
+            <Field
+              label="Extra Labor Hours"
+              value={form.extraLaborHours}
+              onChange={(value) => update("extraLaborHours", value)}
+            />
 
-          <div className="form-grid">
-            <Field label="Extra Labor Hours" value={form.extraLaborHours} onChange={(value) => update("extraLaborHours", value)} />
-            <Field label="Extra Labor Rate ($/hr)" value={form.extraLaborRate} onChange={(value) => update("extraLaborRate", value)} />
-            <Field label="Complexity Fee" value={form.complexityFee} onChange={(value) => update("complexityFee", value)} />
-            <Field label="Finishing Fee" value={form.finishingFee} onChange={(value) => update("finishingFee", value)} />
-            <Field label="Shipping / Delivery" value={form.shippingFee} onChange={(value) => update("shippingFee", value)} />
-            <Field label="Discount" value={form.discount} onChange={(value) => update("discount", value)} />
+            <Field
+              label="Extra Labor Rate"
+              value={form.extraLaborRate}
+              onChange={(value) => update("extraLaborRate", value)}
+            />
+
+            <Field
+              label="Complexity / Risk Fee"
+              value={form.complexityFee}
+              onChange={(value) => update("complexityFee", value)}
+            />
+
+            <Field
+              label="Finishing / Cleanup Fee"
+              value={form.finishingFee}
+              onChange={(value) => update("finishingFee", value)}
+            />
+
+            <Field
+              label="Shipping / Delivery Fee"
+              value={form.shippingFee}
+              onChange={(value) => update("shippingFee", value)}
+            />
+
+            <Field
+              label="Discount"
+              value={form.discount}
+              onChange={(value) => update("discount", value)}
+            />
+
+            <Field
+              label="Buffer Override %"
+              value={form.bufferOverridePercent}
+              onChange={(value) => update("bufferOverridePercent", value)}
+              placeholder={`${totals.autoBufferPercent}`}
+            />
+
+            <Field
+              label="Deposit %"
+              value={form.depositPercent}
+              onChange={(value) => update("depositPercent", value)}
+            />
 
             <label className="field checkbox-field">
-              <input type="checkbox" checked={form.taxEnabled} onChange={(event) => update("taxEnabled", event.target.checked)} />
-              <span>Include tax option</span>
+              <input
+                type="checkbox"
+                checked={Boolean(form.taxEnabled)}
+                onChange={(event) => update("taxEnabled", event.target.checked)}
+              />
+              <span>Charge Tax</span>
             </label>
 
-            {form.taxEnabled && <Field label="Tax %" value={form.taxPercent} onChange={(value) => update("taxPercent", value)} />}
+            {form.taxEnabled && (
+              <Field
+                label="Tax %"
+                value={form.taxPercent}
+                onChange={(value) => update("taxPercent", value)}
+              />
+            )}
           </div>
-        </div>
 
-        <div className="form-card full-span">
-          <h3 className="card-title">Notes</h3>
-          <textarea value={form.notes} onChange={(event) => update("notes", event.target.value)} placeholder="Material color, customer requests, deadline, revision notes, etc." />
+          <label className="field single-row-gap">
+            <span>Project Notes</span>
+            <textarea
+              value={form.notes}
+              onChange={(event) => update("notes", event.target.value)}
+              placeholder="Customer requests, print settings, tolerances, material notes, delivery notes, etc."
+            />
+          </label>
         </div>
       </div>
 
       <aside className="quote-summary">
-        <h3 className="card-title">
-          {editingQuote ? `Update ${editingQuote.quoteNumber}` : "Quote Estimate"}
-        </h3>
+        <h3 className="card-title">Quote Summary</h3>
 
         <div className="summary-total">{money(totals.finalTotal)}</div>
-        <div className="muted-text">Estimated final quote total</div>
+
+        {usesQuantity && (
+          <p className="helper-note">
+            {money(totals.perUnit)} per unit at quantity {totals.quantity}
+          </p>
+        )}
 
         <div className="summary-grid">
-          {usesQuantity && <div><span>Per Unit</span><strong>{money(totals.perUnit)}</strong></div>}
-          <div><span>Suggested Deposit</span><strong>{money(totals.suggestedDeposit)}</strong></div>
-          <div><span>Remaining</span><strong>{money(totals.remainingBalance)}</strong></div>
-          <div><span>Direct Subtotal</span><strong>{money(totals.directSubtotal)}</strong></div>
-          <div><span>Buffer ({totals.appliedBufferPercent}%)</span><strong>{money(totals.quoteBuffer)}</strong></div>
-          <div><span>Minimum Adjustment</span><strong>{money(totals.minimumAdjustment)}</strong></div>
+          <div>
+            <span>Deposit</span>
+            <strong>{money(totals.suggestedDeposit)}</strong>
+          </div>
+
+          <div>
+            <span>Remaining</span>
+            <strong>{money(totals.remainingBalance)}</strong>
+          </div>
+
+          <div>
+            <span>Subtotal</span>
+            <strong>{money(totals.subtotal)}</strong>
+          </div>
+
+          <div>
+            <span>Tax</span>
+            <strong>{money(totals.tax)}</strong>
+          </div>
+        </div>
+
+        <div className="breakdown-list">
+          <div><span>CAD</span><strong>{money(totals.cadCost)}</strong></div>
+          <div><span>Materials</span><strong>{money(totals.materialCost)}</strong></div>
+          <div><span>Machine Time</span><strong>{money(totals.machineCost)}</strong></div>
+          <div><span>Print Setup</span><strong>{money(totals.setupFee)}</strong></div>
+          <div><span>Engraving</span><strong>{money(totals.engravingCost)}</strong></div>
+          <div><span>Vinyl</span><strong>{money(totals.vinylCost)}</strong></div>
+          <div><span>Integration</span><strong>{money(totals.integrationCost)}</strong></div>
+          <div><span>Custom</span><strong>{money(totals.customCost)}</strong></div>
+          <div><span>Labor</span><strong>{money(totals.extraLaborCost)}</strong></div>
+          <div><span>Buffer</span><strong>{totals.appliedBufferPercent}%</strong></div>
+          <div><span>Minimum Adj.</span><strong>{money(totals.minimumAdjustment)}</strong></div>
+        </div>
+
+        <div className="market-box">
+          <div><span>Budget Market</span><strong>{money(totals.market.budgetLow)}–{money(totals.market.budgetHigh)}</strong></div>
+          <div><span>Average Market</span><strong>{money(totals.market.averageLow)}–{money(totals.market.averageHigh)}</strong></div>
+          <div><span>Premium Market</span><strong>{money(totals.market.premiumLow)}–{money(totals.market.premiumHigh)}</strong></div>
         </div>
 
         <p className="helper-note">{totals.minimumReason}</p>
 
-        <div className="breakdown-list">
-          <div><span>Print Material</span><strong>{money(totals.printMaterialCost)}</strong></div>
-          <div><span>Engraving Material</span><strong>{money(totals.engravingMaterialCost)}</strong></div>
-          <div><span>Vinyl Material</span><strong>{money(totals.vinylMaterialCost)}</strong></div>
-          <div><span>Machine Time</span><strong>{money(totals.machineCost)}</strong></div>
-          <div><span>CAD Estimate</span><strong>{money(totals.cadCost)}</strong></div>
-          <div><span>Engraving Service</span><strong>{money(totals.engravingCost)}</strong></div>
-          <div><span>Vinyl Service</span><strong>{money(totals.vinylCost)}</strong></div>
-          <div><span>Integration</span><strong>{money(totals.integrationCost)}</strong></div>
-          <div><span>Custom</span><strong>{money(totals.customCost)}</strong></div>
-          <div><span>Extra Labor</span><strong>{money(totals.extraLaborCost)}</strong></div>
-          <div><span>Print Setup</span><strong>{money(totals.setupFee)}</strong></div>
-          <div><span>Complexity</span><strong>{money(form.complexityFee)}</strong></div>
-          <div><span>Finishing</span><strong>{money(form.finishingFee)}</strong></div>
-          <div><span>Shipping</span><strong>{money(form.shippingFee)}</strong></div>
-          <div><span>Tax</span><strong>{money(totals.tax)}</strong></div>
-          <div><span>Discount</span><strong>-{money(form.discount)}</strong></div>
-        </div>
+        <button className="primary-button" onClick={saveQuote}>
+          <Save size={18} />
+          {editingQuote ? "Save Quote Changes" : "Save Quote"}
+        </button>
 
-        <div className="market-box">
-          <h3 className="card-title">Market Reality Check</h3>
-          <div><span>Budget Range</span><strong>{money(totals.market.budgetLow)}–{money(totals.market.budgetHigh)}</strong></div>
-          <div><span>Average Range</span><strong>{money(totals.market.averageLow)}–{money(totals.market.averageHigh)}</strong></div>
-          <div><span>Premium Range</span><strong>{money(totals.market.premiumLow)}–{money(totals.market.premiumHigh)}</strong></div>
-        </div>
-
-        <div className={editingQuote ? "record-button-row" : ""}>
-          {editingQuote && (
-            <button className="secondary-button" type="button" onClick={onCancelEdit}>
-              <XCircle size={18} />
-              Cancel Edit
-            </button>
-          )}
-
-          <button className="primary-button" onClick={saveQuote}>
-            <Save size={18} />
-            {editingQuote ? "Update Quote" : "Save as Quote"}
+        {editingQuote && (
+          <button className="secondary-button single-row-gap" onClick={onCancelEdit}>
+            <XCircle size={18} />
+            Cancel Edit
           </button>
-        </div>
+        )}
       </aside>
     </section>
   );

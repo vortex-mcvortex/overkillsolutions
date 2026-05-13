@@ -29,6 +29,18 @@ const JOB_STATUSES = [
 
 const PAYMENT_FILTERS = ["All", "Unpaid", "Partially Paid", "Paid", "Overpaid"];
 
+const PRIORITY_LEVELS = ["Normal", "Low", "High", "Rush"];
+
+const PRIORITY_FILTERS = ["All", "Rush", "High", "Normal", "Low"];
+
+const DUE_DATE_FILTERS = [
+  "All",
+  "Overdue",
+  "Due Soon",
+  "No Due Date",
+  "Has Due Date",
+];
+
 const EVENT_TYPES = [
   "Machine Time",
   "CAD / Design",
@@ -93,6 +105,81 @@ function calculateHours(startEvent, stopEvent) {
   return diffMs / 1000 / 60 / 60;
 }
 
+function getTodayStart() {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return today;
+}
+
+function getDueDateStatus(job) {
+  if (!job.dueDate) {
+    return {
+      label: "No Due Date",
+      tone: "neutral",
+      daysRemaining: null,
+      isOverdue: false,
+      isDueSoon: false,
+    };
+  }
+
+  const today = getTodayStart();
+  const dueDate = new Date(`${job.dueDate}T00:00:00`);
+
+  if (Number.isNaN(dueDate.getTime())) {
+    return {
+      label: "Invalid Due Date",
+      tone: "warning",
+      daysRemaining: null,
+      isOverdue: false,
+      isDueSoon: false,
+    };
+  }
+
+  const daysRemaining = Math.ceil((dueDate - today) / 1000 / 60 / 60 / 24);
+
+  if (daysRemaining < 0) {
+    return {
+      label: `Overdue by ${Math.abs(daysRemaining)} day${Math.abs(daysRemaining) === 1 ? "" : "s"}`,
+      tone: "danger",
+      daysRemaining,
+      isOverdue: true,
+      isDueSoon: false,
+    };
+  }
+
+  if (daysRemaining === 0) {
+    return {
+      label: "Due Today",
+      tone: "warning",
+      daysRemaining,
+      isOverdue: false,
+      isDueSoon: true,
+    };
+  }
+
+  if (daysRemaining <= 3) {
+    return {
+      label: `Due in ${daysRemaining} day${daysRemaining === 1 ? "" : "s"}`,
+      tone: "warning",
+      daysRemaining,
+      isOverdue: false,
+      isDueSoon: true,
+    };
+  }
+
+  return {
+    label: `Due in ${daysRemaining} days`,
+    tone: "normal",
+    daysRemaining,
+    isOverdue: false,
+    isDueSoon: false,
+  };
+}
+
+function getPriority(job) {
+  return job.priority || "Normal";
+}
+
 function matchesJobSearch(job, searchTerm) {
   const search = searchTerm.trim().toLowerCase();
   if (!search) return true;
@@ -107,21 +194,81 @@ function matchesJobSearch(job, searchTerm) {
     job.jobName,
     job.status,
     getPaymentStatus(job),
+    getPriority(job),
+    job.dueDate,
   ]
     .filter(Boolean)
     .some((value) => String(value).toLowerCase().includes(search));
 }
 
-function matchesJobFilters(job, searchTerm, statusFilter, paymentFilter) {
+function matchesDueDateFilter(job, dueDateFilter) {
+  const due = getDueDateStatus(job);
+
+  if (dueDateFilter === "All") return true;
+  if (dueDateFilter === "Overdue") return due.isOverdue;
+  if (dueDateFilter === "Due Soon") return due.isDueSoon;
+  if (dueDateFilter === "No Due Date") return !job.dueDate;
+  if (dueDateFilter === "Has Due Date") return Boolean(job.dueDate);
+
+  return true;
+}
+
+function matchesJobFilters(
+  job,
+  searchTerm,
+  statusFilter,
+  paymentFilter,
+  priorityFilter,
+  dueDateFilter
+) {
   const paymentStatus = getPaymentStatus(job);
+  const priority = getPriority(job);
 
   const searchMatches = matchesJobSearch(job, searchTerm);
   const statusMatches =
     statusFilter === "All" || (job.status || "Approved") === statusFilter;
   const paymentMatches =
     paymentFilter === "All" || paymentStatus === paymentFilter;
+  const priorityMatches =
+    priorityFilter === "All" || priority === priorityFilter;
+  const dueDateMatches = matchesDueDateFilter(job, dueDateFilter);
 
-  return searchMatches && statusMatches && paymentMatches;
+  return (
+    searchMatches &&
+    statusMatches &&
+    paymentMatches &&
+    priorityMatches &&
+    dueDateMatches
+  );
+}
+
+function getPriorityRank(priority) {
+  if (priority === "Rush") return 4;
+  if (priority === "High") return 3;
+  if (priority === "Normal") return 2;
+  if (priority === "Low") return 1;
+  return 2;
+}
+
+function sortJobsForQueue(jobs) {
+  return [...jobs].sort((a, b) => {
+    const aDue = getDueDateStatus(a);
+    const bDue = getDueDateStatus(b);
+
+    if (aDue.isOverdue !== bDue.isOverdue) return aDue.isOverdue ? -1 : 1;
+
+    const priorityDiff = getPriorityRank(getPriority(b)) - getPriorityRank(getPriority(a));
+    if (priorityDiff !== 0) return priorityDiff;
+
+    if (a.dueDate && b.dueDate) {
+      return new Date(`${a.dueDate}T00:00:00`) - new Date(`${b.dueDate}T00:00:00`);
+    }
+
+    if (a.dueDate && !b.dueDate) return -1;
+    if (!a.dueDate && b.dueDate) return 1;
+
+    return new Date(b.updatedAt || b.approvedAt || 0) - new Date(a.updatedAt || a.approvedAt || 0);
+  });
 }
 
 function Field({ label, value, onChange, type = "number", step = "0.01" }) {
@@ -278,26 +425,53 @@ export default function JobsPage({
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
   const [paymentFilter, setPaymentFilter] = useState("All");
+  const [priorityFilter, setPriorityFilter] = useState("All");
+  const [dueDateFilter, setDueDateFilter] = useState("All");
 
   const activeJobs = jobs.filter((job) => !job.archived);
   const archivedJobs = jobs.filter((job) => job.archived);
 
   const filteredActiveJobs = useMemo(() => {
-    return activeJobs.filter((job) =>
-      matchesJobFilters(job, searchTerm, statusFilter, paymentFilter)
+    return sortJobsForQueue(
+      activeJobs.filter((job) =>
+        matchesJobFilters(
+          job,
+          searchTerm,
+          statusFilter,
+          paymentFilter,
+          priorityFilter,
+          dueDateFilter
+        )
+      )
     );
-  }, [activeJobs, searchTerm, statusFilter, paymentFilter]);
+  }, [activeJobs, searchTerm, statusFilter, paymentFilter, priorityFilter, dueDateFilter]);
 
   const filteredArchivedJobs = useMemo(() => {
-    return archivedJobs.filter((job) =>
-      matchesJobFilters(job, searchTerm, statusFilter, paymentFilter)
+    return sortJobsForQueue(
+      archivedJobs.filter((job) =>
+        matchesJobFilters(
+          job,
+          searchTerm,
+          statusFilter,
+          paymentFilter,
+          priorityFilter,
+          dueDateFilter
+        )
+      )
     );
-  }, [archivedJobs, searchTerm, statusFilter, paymentFilter]);
+  }, [archivedJobs, searchTerm, statusFilter, paymentFilter, priorityFilter, dueDateFilter]);
+
+  const overdueCount = activeJobs.filter((job) => getDueDateStatus(job).isOverdue).length;
+  const dueSoonCount = activeJobs.filter((job) => getDueDateStatus(job).isDueSoon).length;
+  const rushCount = activeJobs.filter((job) => getPriority(job) === "Rush").length;
+  const highPriorityCount = activeJobs.filter((job) => getPriority(job) === "High").length;
 
   function clearFilters() {
     setSearchTerm("");
     setStatusFilter("All");
     setPaymentFilter("All");
+    setPriorityFilter("All");
+    setDueDateFilter("All");
   }
 
   function handleImportChange(event) {
@@ -457,6 +631,8 @@ export default function JobsPage({
 
     const isExpanded = expandedJobId === job.id;
     const paymentStatus = getPaymentStatus(job);
+    const dueStatus = getDueDateStatus(job);
+    const priority = getPriority(job);
 
     return (
       <article
@@ -478,6 +654,12 @@ export default function JobsPage({
 
           <div className="job-list-meta">
             {job.archived && <span className="archive-pill">Archived</span>}
+
+            <span className="status-pill">{priority}</span>
+
+            <span className="status-pill">
+              {job.dueDate ? `${job.dueDate} • ${dueStatus.label}` : dueStatus.label}
+            </span>
 
             <span className={`payment-status-pill payment-${slug(paymentStatus)}`}>
               {paymentStatus}
@@ -505,6 +687,12 @@ export default function JobsPage({
               </div>
 
               <div className="job-status-control-group">
+                <span className="status-pill">{priority}</span>
+
+                <span className="status-pill">
+                  {job.dueDate ? `${job.dueDate} • ${dueStatus.label}` : dueStatus.label}
+                </span>
+
                 <span className={`payment-status-pill payment-${slug(paymentStatus)}`}>
                   {paymentStatus}
                 </span>
@@ -531,6 +719,56 @@ export default function JobsPage({
 
             <div className="record-title">{job.jobName || "Untitled Job"}</div>
 
+            <div className="form-card single-row-gap">
+              <h3 className="card-title">Production Queue Controls</h3>
+
+              <div className="form-grid">
+                <label className="field">
+                  <span>Priority</span>
+                  <select
+                    value={priority}
+                    onChange={(event) =>
+                      onUpdateJob(job.id, {
+                        priority: event.target.value,
+                      })
+                    }
+                  >
+                    {PRIORITY_LEVELS.map((level) => (
+                      <option key={level} value={level}>
+                        {level}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <Field
+                  label="Due Date"
+                  type="date"
+                  value={job.dueDate || ""}
+                  onChange={(value) =>
+                    onUpdateJob(job.id, {
+                      dueDate: value,
+                    })
+                  }
+                />
+
+                <Field
+                  label="Internal Queue Notes"
+                  type="text"
+                  value={job.queueNotes || ""}
+                  onChange={(value) =>
+                    onUpdateJob(job.id, {
+                      queueNotes: value,
+                    })
+                  }
+                />
+              </div>
+
+              <p className="helper-note">
+                Active jobs are sorted by overdue status, priority, due date, then latest update.
+              </p>
+            </div>
+
             <div className="record-tags">
               {job.jobAspects?.cad && <span>CAD</span>}
               {job.jobAspects?.printing && <span>3D Printing</span>}
@@ -539,7 +777,16 @@ export default function JobsPage({
               {job.jobAspects?.custom && <span>Custom</span>}
               {job.importedFromPdf && <span>Imported PDF</span>}
               {job.archived && <span>Archived</span>}
+              {priority && <span>{priority} Priority</span>}
+              {job.dueDate && <span>Due {job.dueDate}</span>}
+              {dueStatus.isOverdue && <span>{dueStatus.label}</span>}
             </div>
+
+            {job.queueNotes && (
+              <p className="helper-note">
+                Queue Notes: {job.queueNotes}
+              </p>
+            )}
 
             <div className="record-button-row job-action-row">
               <button
@@ -862,7 +1109,9 @@ export default function JobsPage({
         <div>
           <h2 className="section-title brand-font">Jobs</h2>
           <p className="muted-text">
-            Active work queue with expandable production logs, production sheets, job duplication, archiving, search, filters, payments, and status tracking.
+            Active work queue with priority, due dates, expandable production logs,
+            production sheets, job duplication, archiving, search, filters, payments,
+            and status tracking.
           </p>
 
           {importMessage && <p className="helper-note">{importMessage}</p>}
@@ -894,7 +1143,7 @@ export default function JobsPage({
           <input
             type="search"
             value={searchTerm}
-            placeholder="Search jobs by customer, job, phone, email, quote, invoice, or job number..."
+            placeholder="Search jobs by customer, job, phone, email, quote, invoice, priority, due date, or job number..."
             onChange={(event) => setSearchTerm(event.target.value)}
           />
         </label>
@@ -928,6 +1177,34 @@ export default function JobsPage({
           </select>
         </label>
 
+        <label className="filter-select-field">
+          <span>Priority</span>
+          <select
+            value={priorityFilter}
+            onChange={(event) => setPriorityFilter(event.target.value)}
+          >
+            {PRIORITY_FILTERS.map((priority) => (
+              <option key={priority} value={priority}>
+                {priority === "All" ? "All Priorities" : priority}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="filter-select-field">
+          <span>Due Date</span>
+          <select
+            value={dueDateFilter}
+            onChange={(event) => setDueDateFilter(event.target.value)}
+          >
+            {DUE_DATE_FILTERS.map((filter) => (
+              <option key={filter} value={filter}>
+                {filter}
+              </option>
+            ))}
+          </select>
+        </label>
+
         <button className="secondary-button filter-clear-button" onClick={clearFilters}>
           Clear
         </button>
@@ -942,6 +1219,26 @@ export default function JobsPage({
         <div>
           <span>Matching Active</span>
           <strong>{filteredActiveJobs.length}</strong>
+        </div>
+
+        <div>
+          <span>Overdue</span>
+          <strong>{overdueCount}</strong>
+        </div>
+
+        <div>
+          <span>Due Soon</span>
+          <strong>{dueSoonCount}</strong>
+        </div>
+
+        <div>
+          <span>Rush Jobs</span>
+          <strong>{rushCount}</strong>
+        </div>
+
+        <div>
+          <span>High Priority</span>
+          <strong>{highPriorityCount}</strong>
         </div>
 
         <div>
@@ -965,7 +1262,7 @@ export default function JobsPage({
       ) : filteredActiveJobs.length === 0 ? (
         <div className="empty-state">
           <h3>No matching active jobs.</h3>
-          <p>Try a different search term, job status, or payment status.</p>
+          <p>Try a different search term, job status, payment status, priority, or due date filter.</p>
         </div>
       ) : (
         <div className="jobs-stack">
