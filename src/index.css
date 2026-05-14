@@ -1637,3 +1637,12 @@ textarea:focus {
   color: var(--color-gray);
   font-size: 0.9rem;
 }
+.material-color-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  margin-right: 8px;
+  vertical-align: -2px;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
