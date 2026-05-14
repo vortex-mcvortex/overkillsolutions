@@ -8,6 +8,7 @@ const RED = [214, 40, 40];
 const DARK = [18, 18, 18];
 const GRAY = [105, 105, 105];
 const LIGHT = [235, 235, 235];
+const SOFT_RED = [252, 235, 235];
 
 const PAGE = {
   left: 14,
@@ -133,13 +134,8 @@ function getRevisionSummary(record) {
     return `Revision ${revisionNumber} based on ${record.sourceQuoteNumber}.`;
   }
 
-  if (revisionNumber > 0) {
-    return `Revision ${revisionNumber}.`;
-  }
-
-  if (record.sourceQuoteNumber) {
-    return `Copied from ${record.sourceQuoteNumber}.`;
-  }
+  if (revisionNumber > 0) return `Revision ${revisionNumber}.`;
+  if (record.sourceQuoteNumber) return `Copied from ${record.sourceQuoteNumber}.`;
 
   return "";
 }
@@ -163,14 +159,14 @@ function addFooter(doc) {
   );
 }
 
-function addHeader(doc, title, numberText) {
+function addHeader(doc, title, numberText, copyLabel = "CUSTOMER COPY") {
   const pageWidth = doc.internal.pageSize.getWidth();
 
   doc.setFillColor(...DARK);
-  doc.rect(0, 0, pageWidth, 42, "F");
+  doc.rect(0, 0, pageWidth, 44, "F");
 
   doc.setFillColor(...RED);
-  doc.rect(0, 40, pageWidth, 3, "F");
+  doc.rect(0, 42, pageWidth, 3, "F");
 
   try {
     doc.addImage(overkillLogo, "PNG", PAGE.left, 8, 62, 20);
@@ -187,19 +183,24 @@ function addHeader(doc, title, numberText) {
     // optional logo fallback
   }
 
-  doc.setTextColor(255, 255, 255);
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(20);
-  doc.text(title, PAGE.left, 58);
+  doc.setFontSize(8);
+  doc.setTextColor(255, 255, 255);
+  doc.text(copyLabel, PAGE.right, 34, { align: "right" });
+
+  doc.setTextColor(...DARK);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(22);
+  doc.text(title, PAGE.left, 59);
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
   doc.setTextColor(...GRAY);
-  doc.text(numberText, PAGE.left, 65);
+  doc.text(numberText, PAGE.left, 66);
 
   addFooter(doc);
 
-  return 74;
+  return 76;
 }
 
 function addContinuationHeader(doc, title, numberText) {
@@ -284,22 +285,18 @@ function buildContactRows(record) {
     rows.push(["Address", record.customerAddress || record.formData?.customerAddress || ""]);
   }
 
-  if (record.preferredContactMethod || record.formData?.preferredContactMethod) {
-    const preferredContact =
-      record.preferredContactMethod || record.formData?.preferredContactMethod;
+  const preferredContact =
+    record.preferredContactMethod || record.formData?.preferredContactMethod;
 
-    if (preferredContact && preferredContact !== "Not Set") {
-      rows.push(["Preferred Contact", preferredContact]);
-    }
+  if (preferredContact && preferredContact !== "Not Set") {
+    rows.push(["Preferred Contact", preferredContact]);
   }
 
-  if (record.preferredPaymentMethod || record.formData?.preferredPaymentMethod) {
-    const preferredPayment =
-      record.preferredPaymentMethod || record.formData?.preferredPaymentMethod;
+  const preferredPayment =
+    record.preferredPaymentMethod || record.formData?.preferredPaymentMethod;
 
-    if (preferredPayment && preferredPayment !== "Not Set") {
-      rows.push(["Preferred Payment", preferredPayment]);
-    }
+  if (preferredPayment && preferredPayment !== "Not Set") {
+    rows.push(["Preferred Payment", preferredPayment]);
   }
 
   return rows;
@@ -338,18 +335,18 @@ function addInfoBlock(doc, record, startY, title, numberText, extraRows = []) {
     theme: "plain",
     styles: {
       fontSize: 10,
-      cellPadding: 2,
+      cellPadding: 2.2,
       overflow: "linebreak",
     },
     columnStyles: {
       0: {
         fontStyle: "bold",
         textColor: RED,
-        cellWidth: 38,
+        cellWidth: 40,
       },
       1: {
         textColor: [30, 30, 30],
-        cellWidth: 144,
+        cellWidth: 142,
       },
     },
     margin: {
@@ -358,13 +355,13 @@ function addInfoBlock(doc, record, startY, title, numberText, extraRows = []) {
     },
   });
 
-  return doc.lastAutoTable.finalY + 8;
+  return doc.lastAutoTable.finalY + 9;
 }
 
 function addTotalsBox(doc, rows, startY, documentTitle, numberText) {
   if (!rows.length) return startY;
 
-  startY = ensureSpace(doc, startY, rows.length * 10 + 18, documentTitle, numberText);
+  startY = ensureSpace(doc, startY, rows.length * 11 + 18, documentTitle, numberText);
 
   autoTable(doc, {
     startY,
@@ -378,15 +375,18 @@ function addTotalsBox(doc, rows, startY, documentTitle, numberText) {
     rowPageBreak: "avoid",
     styles: {
       fontSize: 10,
-      cellPadding: 4,
+      cellPadding: 4.5,
       lineColor: [220, 220, 220],
       lineWidth: 0.2,
       overflow: "linebreak",
     },
+    alternateRowStyles: {
+      fillColor: [250, 250, 250],
+    },
     columnStyles: {
       0: {
         fontStyle: "bold",
-        textColor: [60, 60, 60],
+        textColor: [55, 55, 55],
         cellWidth: 120,
       },
       1: {
@@ -399,6 +399,7 @@ function addTotalsBox(doc, rows, startY, documentTitle, numberText) {
         data.cell.styles.fillColor = RED;
         data.cell.styles.textColor = [255, 255, 255];
         data.cell.styles.fontStyle = "bold";
+        data.cell.styles.fontSize = 11;
       }
     },
     didDrawPage() {
@@ -406,7 +407,7 @@ function addTotalsBox(doc, rows, startY, documentTitle, numberText) {
     },
   });
 
-  return doc.lastAutoTable.finalY + 10;
+  return doc.lastAutoTable.finalY + 11;
 }
 
 function addTable(doc, options, documentTitle, numberText) {
@@ -427,6 +428,38 @@ function addTable(doc, options, documentTitle, numberText) {
   });
 
   return doc.lastAutoTable.finalY + 10;
+}
+
+function addAmountDueBox(doc, { label, amount, subLabel, paid, total }, y, documentTitle, numberText) {
+  y = ensureSpace(doc, y, 42, documentTitle, numberText);
+
+  doc.setFillColor(...SOFT_RED);
+  doc.setDrawColor(...RED);
+  doc.roundedRect(PAGE.left, y, PAGE.right - PAGE.left, 34, 3, 3, "FD");
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(...RED);
+  doc.text(label, PAGE.left + 7, y + 10);
+
+  doc.setFontSize(22);
+  doc.setTextColor(...DARK);
+  doc.text(money(amount), PAGE.right - 7, y + 14, { align: "right" });
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  doc.setTextColor(70, 70, 70);
+
+  if (subLabel) {
+    doc.text(subLabel, PAGE.left + 7, y + 23);
+  }
+
+  if (paid !== undefined || total !== undefined) {
+    const paidText = `Paid: ${money(paid || 0)}    Total: ${money(total || 0)}`;
+    doc.text(paidText, PAGE.right - 7, y + 24, { align: "right" });
+  }
+
+  return y + 44;
 }
 
 function addSignatureSection(doc, y, documentTitle, numberText) {
@@ -540,41 +573,163 @@ function buildShippingRows(record) {
   return rows;
 }
 
-function applyBufferToQuoteRows(totals, form, record) {
-  const bufferMultiplier = 1 + num(totals.appliedBufferPercent) / 100;
-  const buffered = (value) => money(num(value) * bufferMultiplier);
+function getJobAttachments(record) {
+  return Array.isArray(record.attachments) ? record.attachments : [];
+}
 
-  const shippingFromEstimate = num(record.shippingEstimate?.total);
-  const finishingOther =
-    num(form.finishingFee) +
-    num(form.complexityFee) +
-    (shippingFromEstimate > 0 ? 0 : num(form.shippingFee));
+function buildAttachmentRows(record) {
+  const attachments = getJobAttachments(record);
+
+  return attachments.map((attachment, index) => [
+    `${index + 1}`,
+    attachment.type || "Other",
+    attachment.name || "Unnamed attachment",
+    attachment.url || "No path / URL saved",
+    attachment.notes || "",
+  ]);
+}
+
+function addAttachmentsSectionIfNeeded(doc, job, y, documentTitle, numberText) {
+  const rows = buildAttachmentRows(job);
+
+  if (rows.length === 0) return y;
+
+  y = addSectionTitle(doc, "Job Attachments / File Links", y, documentTitle, numberText);
+
+  y = addTable(
+    doc,
+    {
+      startY: y,
+      head: [["#", "Type", "Name", "Path / URL / Location", "Notes"]],
+      body: rows,
+      theme: "grid",
+      headStyles: {
+        fillColor: RED,
+        textColor: [255, 255, 255],
+      },
+      alternateRowStyles: {
+        fillColor: [250, 250, 250],
+      },
+      styles: {
+        fontSize: 7.5,
+        cellPadding: 2.4,
+        overflow: "linebreak",
+      },
+      columnStyles: {
+        0: { cellWidth: 9, halign: "center" },
+        1: { cellWidth: 34, fontStyle: "bold" },
+        2: { cellWidth: 40 },
+        3: { cellWidth: 62 },
+        4: { cellWidth: 37 },
+      },
+    },
+    documentTitle,
+    numberText
+  );
+
+  return addWrappedText(
+    doc,
+    "Attachment records are file names, links, or storage locations only. The files themselves are not embedded in this production sheet.",
+    y,
+    documentTitle,
+    numberText
+  );
+}
+
+function buildFallbackCustomerLines(record) {
+  const totals = record.totals || record.quoteSnapshot?.totals || {};
+  const form = record.formData || record.quoteSnapshot?.formData || {};
+  const rows = [];
+
+  const printTotal =
+    num(totals.customerPrintingCost) ||
+    num(totals.printMaterialCost) +
+      num(totals.machineCost) +
+      num(totals.setupFee);
+
+  const cadTotal = num(totals.customerCadCost) || num(totals.cadCost);
+  const engravingTotal =
+    num(totals.customerEngravingCost) ||
+    num(totals.engravingMaterialCost) +
+      num(totals.engravingCost);
+  const vinylTotal =
+    num(totals.customerVinylCost) ||
+    num(totals.vinylMaterialCost) +
+      num(totals.vinylCost);
+  const integrationTotal =
+    num(totals.customerIntegrationCost) || num(totals.integrationCost);
+  const customTotal = num(totals.customerCustomCost) || num(totals.customCost);
+  const finishingTotal =
+    num(totals.customerFinishingCost) ||
+    num(totals.extraLaborCost) +
+      num(form.complexityFee) +
+      num(form.finishingFee);
+  const shippingTotal =
+    num(totals.customerShippingCost) ||
+    num(record.shippingEstimate?.total) ||
+    num(form.shippingFee);
+
+  if (form.jobAspects?.cad || cadTotal > 0) rows.push(["Design / CAD Work", money(cadTotal)]);
+  if (form.jobAspects?.printing || printTotal > 0) rows.push(["3D Printing", money(printTotal)]);
+  if (form.jobAspects?.engraving || engravingTotal > 0) rows.push(["Laser Engraving", money(engravingTotal)]);
+  if (form.jobAspects?.vinyl || vinylTotal > 0) rows.push(["Vinyl / Cutting Work", money(vinylTotal)]);
+  if (integrationTotal > 0) rows.push(["Project Setup / Integration", money(integrationTotal)]);
+  if (customTotal > 0) rows.push(["Custom Work", money(customTotal)]);
+  if (finishingTotal > 0) rows.push(["Finishing / Cleanup", money(finishingTotal)]);
+  if (shippingTotal > 0) rows.push(["Shipping / Delivery", money(shippingTotal)]);
+
+  return rows;
+}
+
+function buildCustomerFacingRows(record) {
+  const totals = record.totals || record.quoteSnapshot?.totals || {};
+  const form = record.formData || record.quoteSnapshot?.formData || {};
+  const savedLines = totals.customerFacingLines || [];
+  const rows =
+    savedLines.length > 0
+      ? savedLines.map(([label, value]) => [label, money(value)])
+      : buildFallbackCustomerLines(record);
+
+  if (num(form.discount) > 0) {
+    rows.push(["Discount", `-${money(form.discount)}`]);
+  }
+
+  if (num(totals.tax) > 0) {
+    rows.push(["Tax", money(totals.tax)]);
+  }
+
+  rows.push(["Final Total", money(record.finalTotal)]);
+
+  return rows.filter((row) => row[1] !== "$0.00" && row[1] !== "-$0.00");
+}
+
+function buildInternalRows(record) {
+  const totals = record.totals || record.quoteSnapshot?.totals || {};
+  const form = record.formData || record.quoteSnapshot?.formData || {};
 
   return [
-    ["CAD Design", buffered(totals.cadCost)],
-    ["3D Print Material", buffered(totals.printMaterialCost)],
-    ["3D Print Machine Time", buffered(totals.machineCost)],
-    ["3D Print Setup", buffered(totals.setupFee)],
-    ["Engraving Material", buffered(totals.engravingMaterialCost)],
-    ["Engraving Service", buffered(totals.engravingCost)],
-    ["Vinyl Material", buffered(totals.vinylMaterialCost)],
-    ["Vinyl Service", buffered(totals.vinylCost)],
-    ["Project Integration", buffered(totals.integrationCost)],
-    ["Custom Fabrication", buffered(totals.customCost)],
-    ["Extra Labor", buffered(totals.extraLaborCost)],
-    ["Shipping / Delivery", shippingFromEstimate > 0 ? money(shippingFromEstimate) : "$0.00"],
-    ["Finishing / Other", buffered(finishingOther)],
+    ["CAD Design", money(totals.cadCost)],
+    ["3D Print Material", money(totals.printMaterialCost)],
+    ["3D Print Machine Time", money(totals.machineCost)],
+    ["3D Print Setup", money(totals.setupFee)],
+    ["Engraving Material", money(totals.engravingMaterialCost)],
+    ["Engraving Service", money(totals.engravingCost)],
+    ["Vinyl Material", money(totals.vinylMaterialCost)],
+    ["Vinyl Service", money(totals.vinylCost)],
+    ["Project Integration", money(totals.integrationCost)],
+    ["Custom Fabrication", money(totals.customCost)],
+    ["Extra Labor", money(totals.extraLaborCost)],
+    ["Internal Buffer", money(totals.quoteBuffer)],
+    ["Minimum Adjustment", money(totals.minimumAdjustment)],
     ["Discount", `-${money(form.discount)}`],
     ["Tax", money(totals.tax)],
     ["Final Total", money(record.finalTotal)],
   ].filter((row) => row[1] !== "$0.00" && row[1] !== "-$0.00");
 }
 
-function getServiceRows(record) {
-  const totals = record.totals || record.quoteSnapshot?.totals || {};
-  const form = record.formData || record.quoteSnapshot?.formData || {};
-
-  return applyBufferToQuoteRows(totals, form, record);
+function getServiceRows(record, mode = "customer") {
+  if (mode === "internal") return buildInternalRows(record);
+  return buildCustomerFacingRows(record);
 }
 
 function getPaymentTotals(job) {
@@ -606,6 +761,11 @@ function buildProductionSummary(job) {
   if (job.priority) rows.push(["Priority", job.priority]);
   if (job.dueDate) rows.push(["Due Date", job.dueDate]);
   if (job.queueNotes) rows.push(["Queue Notes", job.queueNotes]);
+
+  const attachmentCount = getJobAttachments(job).length;
+  if (attachmentCount > 0) {
+    rows.push(["Attachments", `${attachmentCount} attachment record(s) saved. See attachment section.`]);
+  }
 
   if (form.customerTags) rows.push(["Customer Tags", form.customerTags]);
   if (form.customerNotes) rows.push(["Customer Notes", form.customerNotes]);
@@ -654,6 +814,8 @@ function buildProductionSummary(job) {
 
 function buildInternalChecklistRows(job) {
   const form = job.formData || job.quoteSnapshot?.formData || {};
+  const attachmentCount = getJobAttachments(job).length;
+
   const rows = [
     ["☐", "Confirm customer info and scope"],
     ["☐", "Confirm priority and due date"],
@@ -661,6 +823,10 @@ function buildInternalChecklistRows(job) {
     ["☐", "Confirm required files/designs/references are available"],
     ["☐", "Confirm material/color/module selections"],
   ];
+
+  if (attachmentCount > 0) {
+    rows.push(["☐", `Review ${attachmentCount} saved attachment record(s)`]);
+  }
 
   if (job.jobAspects?.cad || form.jobAspects?.cad) {
     rows.push(["☐", "CAD complete / design approved"]);
@@ -781,22 +947,34 @@ export function exportQuotePdf(quote) {
   const documentTitle = "QUOTE";
   const numberText = `Quote Number: ${quote.quoteNumber || "N/A"}${revisionSuffix}`;
 
-  let y = addHeader(doc, documentTitle, numberText);
+  let y = addHeader(doc, documentTitle, numberText, "CUSTOMER QUOTE");
+
+  y = addAmountDueBox(
+    doc,
+    {
+      label: "ESTIMATED PROJECT TOTAL",
+      amount: quote.finalTotal,
+      subLabel: "Custom work estimate. Final pricing may change if scope or materials change.",
+    },
+    y,
+    documentTitle,
+    numberText
+  );
 
   y = addInfoBlock(doc, quote, y, documentTitle, numberText);
   y = addRevisionSectionIfNeeded(doc, quote, y, documentTitle, numberText);
 
-  y = addSectionTitle(doc, "Quote Summary", y, documentTitle, numberText);
-  y = addTotalsBox(doc, getServiceRows(quote), y, documentTitle, numberText);
+  y = addSectionTitle(doc, "Customer Quote Summary", y, documentTitle, numberText);
+  y = addTotalsBox(doc, getServiceRows(quote, "customer"), y, documentTitle, numberText);
 
-  y = addSectionTitle(doc, "Payment Estimate", y, documentTitle, numberText);
+  y = addSectionTitle(doc, "Deposit / Payment Estimate", y, documentTitle, numberText);
 
   y = addTotalsBox(
     doc,
     [
-      ["Suggested Deposit", money(quote.depositAmount)],
-      ["Remaining Balance", money(quote.remainingBalance)],
-      ["Total", money(quote.finalTotal)],
+      ["Suggested Deposit to Start", money(quote.depositAmount)],
+      ["Estimated Remaining Balance", money(quote.remainingBalance)],
+      ["Estimated Project Total", money(quote.finalTotal)],
     ],
     y,
     documentTitle,
@@ -861,7 +1039,21 @@ export function exportInvoicePdf(job) {
 
   const { totalPaid, remaining, status } = getPaymentTotals(job);
 
-  let y = addHeader(doc, documentTitle, numberText);
+  let y = addHeader(doc, documentTitle, numberText, "CUSTOMER INVOICE");
+
+  y = addAmountDueBox(
+    doc,
+    {
+      label: remaining > 0 ? "AMOUNT DUE" : "BALANCE PAID",
+      amount: remaining,
+      subLabel: `Payment status: ${status}`,
+      paid: totalPaid,
+      total: job.finalTotal,
+    },
+    y,
+    documentTitle,
+    numberText
+  );
 
   y = addInfoBlock(
     doc,
@@ -892,15 +1084,15 @@ export function exportInvoicePdf(job) {
     numberText
   );
 
-  y = addSectionTitle(doc, "Service Breakdown", y, documentTitle, numberText);
-  y = addTotalsBox(doc, getServiceRows(job), y, documentTitle, numberText);
+  y = addSectionTitle(doc, "Customer Service Breakdown", y, documentTitle, numberText);
+  y = addTotalsBox(doc, getServiceRows(job, "customer"), y, documentTitle, numberText);
 
   y = addShippingSectionIfNeeded(doc, job, y, documentTitle, numberText);
 
   const productionRows = buildProductionSummary(job);
 
   if (productionRows.length > 0) {
-    y = addSectionTitle(doc, "Production / Scope Details", y, documentTitle, numberText);
+    y = addSectionTitle(doc, "Project / Scope Details", y, documentTitle, numberText);
 
     y = addTable(
       doc,
@@ -913,9 +1105,12 @@ export function exportInvoicePdf(job) {
           fillColor: RED,
           textColor: [255, 255, 255],
         },
+        alternateRowStyles: {
+          fillColor: [250, 250, 250],
+        },
         styles: {
           fontSize: 8,
-          cellPadding: 3,
+          cellPadding: 3.3,
           overflow: "linebreak",
         },
         columnStyles: {
@@ -950,6 +1145,9 @@ export function exportInvoicePdf(job) {
       headStyles: {
         fillColor: RED,
         textColor: [255, 255, 255],
+      },
+      alternateRowStyles: {
+        fillColor: [250, 250, 250],
       },
       styles: {
         fontSize: 8,
@@ -991,7 +1189,7 @@ export function exportProductionSheetPdf(job) {
   const form = job.formData || job.quoteSnapshot?.formData || {};
   const invoiceNumber = getInvoiceNumber(job);
 
-  let y = addHeader(doc, documentTitle, numberText);
+  let y = addHeader(doc, documentTitle, numberText, "INTERNAL COPY");
 
   y = addInfoBlock(
     doc,
@@ -1026,6 +1224,9 @@ export function exportProductionSheetPdf(job) {
         fillColor: RED,
         textColor: [255, 255, 255],
       },
+      alternateRowStyles: {
+        fillColor: [250, 250, 250],
+      },
       styles: {
         fontSize: 8,
         cellPadding: 3,
@@ -1039,6 +1240,8 @@ export function exportProductionSheetPdf(job) {
     documentTitle,
     numberText
   );
+
+  y = addAttachmentsSectionIfNeeded(doc, job, y, documentTitle, numberText);
 
   if (form.printRuns?.length > 0) {
     y = addSectionTitle(doc, "Print Run Details", y, documentTitle, numberText);
@@ -1062,6 +1265,9 @@ export function exportProductionSheetPdf(job) {
           fillColor: RED,
           textColor: [255, 255, 255],
         },
+        alternateRowStyles: {
+          fillColor: [250, 250, 250],
+        },
         styles: {
           fontSize: 8,
           cellPadding: 3,
@@ -1072,6 +1278,9 @@ export function exportProductionSheetPdf(job) {
       numberText
     );
   }
+
+  y = addSectionTitle(doc, "Internal Cost Breakdown", y, documentTitle, numberText);
+  y = addTotalsBox(doc, getServiceRows(job, "internal"), y, documentTitle, numberText);
 
   y = addShippingSectionIfNeeded(doc, job, y, documentTitle, numberText);
 
@@ -1087,6 +1296,9 @@ export function exportProductionSheetPdf(job) {
       headStyles: {
         fillColor: RED,
         textColor: [255, 255, 255],
+      },
+      alternateRowStyles: {
+        fillColor: [250, 250, 250],
       },
       styles: {
         fontSize: 9,

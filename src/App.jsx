@@ -10,6 +10,7 @@ import {
   Truck,
   Download,
   Upload,
+  PackageSearch,
 } from "lucide-react";
 
 import CalculatorPage from "./components/CalculatorPage";
@@ -20,6 +21,7 @@ import DashboardPage from "./components/DashboardPage";
 import SettingsPage from "./components/SettingsPage";
 import CustomersPage from "./components/CustomersPage";
 import ShippingPage from "./components/ShippingPage";
+import InventoryPage from "./components/InventoryPage";
 import { importOverkillPdf } from "./utils/pdfImport";
 
 import overkillLogo from "./assets/logos/overkill_main.png";
@@ -35,6 +37,7 @@ const NAV_ITEMS = [
   { id: "payments", label: "Payments", icon: CreditCard },
   { id: "customers", label: "Customers", icon: Users },
   { id: "shipping", label: "Shipping", icon: Truck },
+  { id: "inventory", label: "Inventory", icon: PackageSearch },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 
@@ -44,6 +47,8 @@ const BACKUP_KEYS = {
   shippingEstimates: "overkill_shipping_estimates",
   customerOverrides: "overkill_customer_overrides",
   manualCustomers: "overkill_manual_customers",
+  inventoryItems: "overkill_inventory_items",
+  inventoryLogs: "overkill_inventory_logs",
   usedRecordNumbers: "overkill_used_record_numbers",
   settings: "overkill_settings",
 };
@@ -159,6 +164,12 @@ export default function App() {
   const [manualCustomers, setManualCustomers] = useState(() =>
     getInitialState("overkill_manual_customers", [])
   );
+  const [inventoryItems, setInventoryItems] = useState(() =>
+    getInitialState("overkill_inventory_items", [])
+  );
+  const [inventoryLogs, setInventoryLogs] = useState(() =>
+    getInitialState("overkill_inventory_logs", [])
+  );
   const [usedRecordNumbers, setUsedRecordNumbers] = useState(() =>
     getInitialState("overkill_used_record_numbers", [])
   );
@@ -175,9 +186,141 @@ export default function App() {
     localStorage.setItem("overkill_used_record_numbers", JSON.stringify(nextUsedNumbers));
   }
 
-  function saveShippingEstimates(nextEstimates) {
-    setShippingEstimates(nextEstimates);
-    localStorage.setItem("overkill_shipping_estimates", JSON.stringify(nextEstimates));
+  function saveInventory(nextItems, nextLogs = inventoryLogs) {
+    setInventoryItems(nextItems);
+    setInventoryLogs(nextLogs);
+    localStorage.setItem("overkill_inventory_items", JSON.stringify(nextItems));
+    localStorage.setItem("overkill_inventory_logs", JSON.stringify(nextLogs));
+  }
+
+  function addInventoryItem(itemData) {
+    const now = new Date().toISOString();
+
+    const newItem = {
+      id: crypto.randomUUID(),
+      createdAt: now,
+      updatedAt: now,
+      name: itemData.name || "New Inventory Item",
+      category: itemData.category || "Filament",
+      material: itemData.material || "",
+      color: itemData.color || "",
+      brand: itemData.brand || "",
+      location: itemData.location || "",
+      unit: itemData.unit || "g",
+      quantityOnHand: Number(itemData.quantityOnHand || 0),
+      reorderThreshold: Number(itemData.reorderThreshold || 0),
+      unitCost: Number(itemData.unitCost || 0),
+      vendor: itemData.vendor || "",
+      sku: itemData.sku || "",
+      notes: itemData.notes || "",
+      active: itemData.active !== false,
+    };
+
+    const log = {
+      id: crypto.randomUUID(),
+      itemId: newItem.id,
+      itemName: newItem.name,
+      type: "Created",
+      quantityChange: Number(newItem.quantityOnHand || 0),
+      quantityAfter: Number(newItem.quantityOnHand || 0),
+      unit: newItem.unit,
+      jobNumber: "",
+      notes: "Inventory item created.",
+      createdAt: now,
+    };
+
+    saveInventory([newItem, ...inventoryItems], [log, ...inventoryLogs]);
+  }
+
+  function updateInventoryItem(itemId, updates) {
+    const nextItems = inventoryItems.map((item) =>
+      item.id === itemId
+        ? {
+            ...item,
+            ...updates,
+            quantityOnHand:
+              updates.quantityOnHand !== undefined
+                ? Number(updates.quantityOnHand || 0)
+                : item.quantityOnHand,
+            reorderThreshold:
+              updates.reorderThreshold !== undefined
+                ? Number(updates.reorderThreshold || 0)
+                : item.reorderThreshold,
+            unitCost:
+              updates.unitCost !== undefined
+                ? Number(updates.unitCost || 0)
+                : item.unitCost,
+            updatedAt: new Date().toISOString(),
+          }
+        : item
+    );
+
+    saveInventory(nextItems);
+  }
+
+  function deleteInventoryItem(itemId) {
+    const item = inventoryItems.find((entry) => entry.id === itemId);
+    if (!item) return;
+
+    const confirmed = window.confirm(
+      `Delete "${item.name}" from inventory? Logs will be kept for history.`
+    );
+
+    if (!confirmed) return;
+
+    const now = new Date().toISOString();
+
+    const log = {
+      id: crypto.randomUUID(),
+      itemId,
+      itemName: item.name,
+      type: "Deleted",
+      quantityChange: 0,
+      quantityAfter: Number(item.quantityOnHand || 0),
+      unit: item.unit,
+      jobNumber: "",
+      notes: "Inventory item deleted.",
+      createdAt: now,
+    };
+
+    saveInventory(
+      inventoryItems.filter((entry) => entry.id !== itemId),
+      [log, ...inventoryLogs]
+    );
+  }
+
+  function adjustInventoryItem(itemId, adjustmentData) {
+    const item = inventoryItems.find((entry) => entry.id === itemId);
+    if (!item) return;
+
+    const quantityChange = Number(adjustmentData.quantityChange || 0);
+    const quantityAfter = Number(item.quantityOnHand || 0) + quantityChange;
+    const now = new Date().toISOString();
+
+    const nextItems = inventoryItems.map((entry) =>
+      entry.id === itemId
+        ? {
+            ...entry,
+            quantityOnHand: quantityAfter,
+            updatedAt: now,
+          }
+        : entry
+    );
+
+    const log = {
+      id: crypto.randomUUID(),
+      itemId,
+      itemName: item.name,
+      type: adjustmentData.type || "Manual Adjustment",
+      quantityChange,
+      quantityAfter,
+      unit: item.unit,
+      jobNumber: adjustmentData.jobNumber || "",
+      notes: adjustmentData.notes || "",
+      createdAt: now,
+    };
+
+    saveInventory(nextItems, [log, ...inventoryLogs]);
   }
 
   function exportBackup() {
@@ -191,6 +334,8 @@ export default function App() {
         shippingEstimates: getBackupValue(BACKUP_KEYS.shippingEstimates, []),
         customerOverrides: getBackupValue(BACKUP_KEYS.customerOverrides, {}),
         manualCustomers: getBackupValue(BACKUP_KEYS.manualCustomers, []),
+        inventoryItems: getBackupValue(BACKUP_KEYS.inventoryItems, []),
+        inventoryLogs: getBackupValue(BACKUP_KEYS.inventoryLogs, []),
         usedRecordNumbers: getBackupValue(BACKUP_KEYS.usedRecordNumbers, []),
         settings: getBackupValue(BACKUP_KEYS.settings, null),
       },
@@ -246,6 +391,12 @@ export default function App() {
       const nextManualCustomers = Array.isArray(data.manualCustomers)
         ? data.manualCustomers
         : [];
+      const nextInventoryItems = Array.isArray(data.inventoryItems)
+        ? data.inventoryItems
+        : [];
+      const nextInventoryLogs = Array.isArray(data.inventoryLogs)
+        ? data.inventoryLogs
+        : [];
       const nextUsedRecordNumbers = Array.isArray(data.usedRecordNumbers)
         ? data.usedRecordNumbers
         : [];
@@ -265,6 +416,14 @@ export default function App() {
         JSON.stringify(nextManualCustomers)
       );
       localStorage.setItem(
+        BACKUP_KEYS.inventoryItems,
+        JSON.stringify(nextInventoryItems)
+      );
+      localStorage.setItem(
+        BACKUP_KEYS.inventoryLogs,
+        JSON.stringify(nextInventoryLogs)
+      );
+      localStorage.setItem(
         BACKUP_KEYS.usedRecordNumbers,
         JSON.stringify(nextUsedRecordNumbers)
       );
@@ -278,6 +437,8 @@ export default function App() {
       setShippingEstimates(nextShippingEstimates);
       setCustomerOverrides(nextCustomerOverrides);
       setManualCustomers(nextManualCustomers);
+      setInventoryItems(nextInventoryItems);
+      setInventoryLogs(nextInventoryLogs);
       setUsedRecordNumbers(nextUsedRecordNumbers);
       setSelectedPaymentJobId("");
       setEditingQuoteId(null);
@@ -299,6 +460,11 @@ export default function App() {
     }
 
     event.target.value = "";
+  }
+
+  function saveShippingEstimates(nextEstimates) {
+    setShippingEstimates(nextEstimates);
+    localStorage.setItem("overkill_shipping_estimates", JSON.stringify(nextEstimates));
   }
 
   function addShippingEstimate(estimateData) {
@@ -591,9 +757,7 @@ export default function App() {
   }
 
   function updateQuoteExpiration(quoteId, expiresAt) {
-    updateQuoteWorkflow(quoteId, {
-      expiresAt,
-    });
+    updateQuoteWorkflow(quoteId, { expiresAt });
   }
 
   function deleteQuote(quoteId) {
@@ -673,7 +837,6 @@ export default function App() {
       declinedAt: null,
       expiredAt: null,
       expiresAt: getDefaultExpirationDate(),
-      approvedAt: null,
       importedAt: null,
       importedFromPdf: false,
       jobName: `${quote.jobName || "Untitled Job"} Copy`,
@@ -779,6 +942,7 @@ export default function App() {
       },
       timeEvents: [],
       paymentEvents: [],
+      materialUsageEvents: [],
     };
 
     const nextQuotes = quotes.filter((item) => item.id !== quoteId);
@@ -871,6 +1035,7 @@ export default function App() {
       },
       timeEvents: [],
       paymentEvents: [],
+      materialUsageEvents: [],
       payments: {
         depositPaid: 0,
         additionalPaid: 0,
@@ -966,6 +1131,7 @@ export default function App() {
           },
           timeEvents: record.timeEvents || [],
           paymentEvents: record.paymentEvents || [],
+          materialUsageEvents: record.materialUsageEvents || [],
           importedAt: now,
           importedFromPdf: true,
           updatedAt: now,
@@ -1051,16 +1217,31 @@ export default function App() {
       0
     );
 
+    const lowStockCount = inventoryItems.filter(
+      (item) =>
+        item.active !== false &&
+        Number(item.quantityOnHand || 0) <= Number(item.reorderThreshold || 0)
+    ).length;
+
     return {
       totalQuotes: quotes.length,
       totalJobs: activeJobs.length,
       totalQuoted,
       totalJobsValue,
+      lowStockCount,
     };
-  }, [quotes, jobs]);
+  }, [quotes, jobs, inventoryItems]);
 
   const pageContent = {
-    dashboard: <DashboardPage quotes={quotes} jobs={jobs} />,
+    dashboard: (
+      <DashboardPage
+        quotes={quotes}
+        jobs={jobs}
+        inventoryItems={inventoryItems}
+        inventoryLogs={inventoryLogs}
+      />
+    ),
+
     calculator: (
       <CalculatorPage
         onSaveQuote={saveQuote}
@@ -1072,6 +1253,7 @@ export default function App() {
         customerOverrides={customerOverrides}
       />
     ),
+
     quotes: (
       <QuotesPage
         quotes={quotes}
@@ -1090,18 +1272,22 @@ export default function App() {
         importMessage={importMessage}
       />
     ),
+
     jobs: (
       <JobsPage
         jobs={jobs}
+        inventoryItems={inventoryItems}
         onUpdateJob={updateJob}
         onArchiveJob={archiveJob}
         onRestoreJob={restoreJob}
         onDeleteJob={deleteJob}
         onDuplicateJob={duplicateJob}
+        onAdjustInventoryItem={adjustInventoryItem}
         onImportPdf={(file) => importPdfFile(file, "job")}
         importMessage={importMessage}
       />
     ),
+
     payments: (
       <PaymentsPage
         jobs={jobs.filter((job) => !job.archived)}
@@ -1110,6 +1296,7 @@ export default function App() {
         onUpdateJob={updateJob}
       />
     ),
+
     customers: (
       <CustomersPage
         quotes={quotes}
@@ -1122,6 +1309,7 @@ export default function App() {
         onDeleteManualCustomer={deleteManualCustomer}
       />
     ),
+
     shipping: (
       <ShippingPage
         quotes={quotes}
@@ -1134,6 +1322,19 @@ export default function App() {
         onAttachToJob={attachShippingToJob}
       />
     ),
+
+    inventory: (
+      <InventoryPage
+        inventoryItems={inventoryItems}
+        inventoryLogs={inventoryLogs}
+        jobs={jobs}
+        onAddItem={addInventoryItem}
+        onUpdateItem={updateInventoryItem}
+        onDeleteItem={deleteInventoryItem}
+        onAdjustItem={adjustInventoryItem}
+      />
+    ),
+
     settings: <SettingsPage />,
   };
 
@@ -1183,6 +1384,11 @@ export default function App() {
           </div>
 
           <div>
+            <span>Low Stock</span>
+            <strong>{sidebarStats.lowStockCount}</strong>
+          </div>
+
+          <div>
             <span>Quoted</span>
             <strong>{money(sidebarStats.totalQuoted)}</strong>
           </div>
@@ -1227,7 +1433,7 @@ export default function App() {
           <div>
             <h1 className="brand-font app-title">INTERNAL PRODUCTION SYSTEM</h1>
             <p className="muted-text">
-              Quotes, jobs, time tracking, invoices, shipping, and profitability.
+              Quotes, jobs, time tracking, invoices, shipping, inventory, and profitability.
             </p>
           </div>
         </header>
