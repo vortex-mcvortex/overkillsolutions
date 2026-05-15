@@ -12,6 +12,12 @@ import {
   Eye,
   EyeOff,
 } from "lucide-react";
+import {
+  MATERIAL_CATALOG,
+  MATERIAL_PRICE_MODES,
+  getMaterialDisplayLabel,
+  getMaterialPrice,
+} from "../data/materialCatalog";
 
 const DEFAULT_SETTINGS = {
   defaultTaxPercent: 7,
@@ -250,7 +256,6 @@ function getSettings() {
     return DEFAULT_SETTINGS;
   }
 }
-
 function getStoredTemplates() {
   try {
     const saved = JSON.parse(localStorage.getItem(TEMPLATE_STORAGE_KEY) || "[]");
@@ -506,6 +511,76 @@ function getNozzle(settings, id) {
   return getById(nozzles, id, 0);
 }
 
+function getMaterialPriceMode() {
+  return localStorage.getItem("overkill_material_price_mode") || "msrp";
+}
+
+function isCatalogFilament(item) {
+  return item?.category === "Filament";
+}
+
+function getCatalogPrintMaterials() {
+  return MATERIAL_CATALOG.filter(isCatalogFilament).map((item) => {
+    const priceMode = getMaterialPriceMode();
+    const spoolWeight = Math.max(1, num(item.spoolWeightGrams || 1000));
+    const spoolPrice = getMaterialPrice(item, priceMode);
+    const costPerGram = spoolPrice / spoolWeight;
+
+    return {
+      id: item.id,
+      catalogId: item.id,
+      label: getMaterialDisplayLabel(item),
+      materialType: item.materialType,
+      colorName: item.colorName,
+      bambuCode: item.bambuCode,
+      hexCode: item.hexCode,
+      brand: item.brand,
+      costPerGram,
+      spoolPrice,
+      spoolWeightGrams: spoolWeight,
+      group:
+        /sparkle|metal|cf|carbon|tpu|asa|abs/i.test(`${item.materialType} ${item.colorName}`)
+          ? "specialty"
+          : "standard",
+      active: item.active !== false,
+    };
+  });
+}
+
+function getAllPrintMaterials(settings) {
+  const catalogMaterials = getCatalogPrintMaterials();
+  const legacyMaterials = getActiveItems(settings.printMaterials).map((item) => ({
+    ...item,
+    catalogId: item.catalogId || "",
+    materialType: item.materialType || item.label,
+    colorName: item.colorName || "",
+    bambuCode: item.bambuCode || "",
+    hexCode: item.hexCode || "",
+    spoolPrice: item.spoolPrice || item.costPerGram * 1000,
+    spoolWeightGrams: item.spoolWeightGrams || 1000,
+  }));
+
+  const catalogIds = new Set(catalogMaterials.map((item) => item.id));
+  const uniqueLegacyMaterials = legacyMaterials.filter((item) => !catalogIds.has(item.id));
+
+  return [...catalogMaterials, ...uniqueLegacyMaterials];
+}
+
+function getPrintMaterialById(settings, materialId) {
+  const materials = getAllPrintMaterials(settings);
+  return getById(materials, materialId, 0);
+}
+
+function swatchStyle(hexCode) {
+  return {
+    background: hexCode || "transparent",
+    border:
+      hexCode && hexCode.toLowerCase() === "#ffffff"
+        ? "1px solid #bbb"
+        : undefined,
+  };
+}
+
 function suggestedMachineRate(settings, printerId, material, nozzle) {
   const printer = getPrinterModule(settings, printerId);
   const baseRate = num(settings.machineRates[printer.rateKey]);
@@ -540,7 +615,6 @@ function setupReason(material, nozzle) {
 
   return "Standard material with a standard nozzle is the easiest normal setup.";
 }
-
 function curvedBufferPercent(subtotal, settings) {
   if (subtotal <= 50) return num(settings.bufferCurve.under50);
   if (subtotal <= 100) return num(settings.bufferCurve.under100);
@@ -550,7 +624,7 @@ function curvedBufferPercent(subtotal, settings) {
 }
 
 function createPrintRun(settings) {
-  const activeMaterials = getActiveItems(settings.printMaterials);
+  const activeMaterials = getAllPrintMaterials(settings);
   const activePrinters = getActiveModules(settings, "printer");
   const activeNozzles = getActiveNozzles(settings);
 
@@ -565,6 +639,13 @@ function createPrintRun(settings) {
     id: crypto.randomUUID(),
     printerId: printer.id,
     materialId: material.id,
+    materialCatalogId: material.catalogId || "",
+    materialLabel: material.label || "",
+    materialType: material.materialType || "",
+    materialColorName: material.colorName || "",
+    materialBambuCode: material.bambuCode || "",
+    materialHexCode: material.hexCode || "",
+    materialCostPerGram: num(material.costPerGram),
     nozzleSize: nozzle.id,
     materialGrams: 0,
     machineHours: 1,
@@ -597,7 +678,7 @@ function calculatePrintSetup(settings, printRuns) {
     };
   }
 
-  const printMaterials = getActiveItems(settings.printMaterials);
+  const printMaterials = getAllPrintMaterials(settings);
 
   const rankedRuns = printRuns
     .map((run) => {
@@ -704,6 +785,21 @@ function suggestIntegrationFee(settings, form) {
   return roundUpMoney(settings.integrationCharges[form.integrationComplexity] || 0);
 }
 
+function normalizePrintRunForCatalog(settings, run) {
+  const material = getPrintMaterialById(settings, run.materialId);
+
+  return {
+    ...run,
+    materialCatalogId: run.materialCatalogId || material.catalogId || "",
+    materialLabel: material.label || run.materialLabel || "",
+    materialType: material.materialType || run.materialType || "",
+    materialColorName: material.colorName || run.materialColorName || "",
+    materialBambuCode: material.bambuCode || run.materialBambuCode || "",
+    materialHexCode: material.hexCode || run.materialHexCode || "",
+    materialCostPerGram: num(material.costPerGram || run.materialCostPerGram),
+  };
+}
+
 function buildInitialForm(settings, quote = null) {
   const sourceForm = quote?.formData || {};
   const activeCadPresets = getActiveItems(settings.cadPresets);
@@ -711,7 +807,7 @@ function buildInitialForm(settings, quote = null) {
   const activeLasers = getActiveModules(settings, "laser");
   const activeCutters = getActiveModules(settings, "cutter");
 
-  return {
+  const seededForm = {
     ...DEFAULT_FORM,
     depositPercent: settings.defaultDepositPercent,
     taxPercent: settings.defaultTaxPercent,
@@ -725,13 +821,15 @@ function buildInitialForm(settings, quote = null) {
     preferredPaymentMethod: sourceForm.preferredPaymentMethod || "Not Set",
     printRuns:
       sourceForm.printRuns?.length > 0
-        ? sourceForm.printRuns
+        ? sourceForm.printRuns.map((run) => normalizePrintRunForCatalog(settings, run))
         : [createPrintRun(settings)],
     vinylMaterialLines:
       sourceForm.vinylMaterialLines?.length > 0
         ? sourceForm.vinylMaterialLines
         : [createVinylLine(settings)],
   };
+
+  return seededForm;
 }
 
 function Field({
@@ -774,7 +872,6 @@ function Field({
     </label>
   );
 }
-
 function buildCustomerFacingLines(totals, form) {
   const serviceLines = [];
 
@@ -817,6 +914,18 @@ function buildCustomerFacingLines(totals, form) {
   return serviceLines.filter(([, value]) => num(value) > 0);
 }
 
+function renderMaterialSwatch(hexCode) {
+  if (!hexCode) return null;
+
+  return (
+    <span
+      className="material-color-swatch"
+      style={swatchStyle(hexCode)}
+      title={hexCode}
+    />
+  );
+}
+
 export default function CalculatorPage({
   onSaveQuote,
   editingQuote,
@@ -835,10 +944,12 @@ export default function CalculatorPage({
   const [templateSearch, setTemplateSearch] = useState("");
   const [showTemplatePanel, setShowTemplatePanel] = useState(false);
   const [summaryMode, setSummaryMode] = useState("customer");
+  const [materialPriceMode, setMaterialPriceMode] = useState(getMaterialPriceMode);
 
   useEffect(() => {
     const freshSettings = getSettings();
     setSettings(freshSettings);
+    setMaterialPriceMode(getMaterialPriceMode());
     setForm(buildInitialForm(freshSettings, editingQuote));
     setDismissedCustomerKeys([]);
     setCustomerSearch("");
@@ -872,7 +983,7 @@ export default function CalculatorPage({
       });
   }, [templates, templateSearch]);
 
-  const activePrintMaterials = getActiveItems(settings.printMaterials);
+  const activePrintMaterials = getAllPrintMaterials(settings);
   const activeEngravingMaterials = getActiveItems(settings.engravingMaterials);
   const activeVinylMaterials = getActiveItems(settings.vinylMaterials);
   const activeCadPresets = getActiveItems(settings.cadPresets);
@@ -917,8 +1028,13 @@ export default function CalculatorPage({
     const printMaterialCost = form.jobAspects.printing
       ? roundUpMoney(
           form.printRuns.reduce((sum, run) => {
-            const material = getById(activePrintMaterials, run.materialId);
-            return sum + num(run.materialGrams) * num(material.costPerGram);
+            const material = getPrintMaterialById(settings, run.materialId);
+            const costPerGram =
+              run.materialCostPerGram !== undefined && run.materialCostPerGram !== ""
+                ? num(run.materialCostPerGram)
+                : num(material.costPerGram);
+
+            return sum + num(run.materialGrams) * costPerGram;
           }, 0)
         )
       : 0;
@@ -1105,13 +1221,12 @@ export default function CalculatorPage({
     usesQuantity,
     selectedCadPreset,
     selectedEngravingMaterial,
-    activePrintMaterials,
     activeVinylMaterials,
     printSetupFee,
     settings,
+    materialPriceMode,
   ]);
-
-  const customerFacingLines = useMemo(() => {
+    const customerFacingLines = useMemo(() => {
     return buildCustomerFacingLines(totals, form);
   }, [totals, form]);
 
@@ -1245,11 +1360,18 @@ export default function CalculatorPage({
         const updatedRun = { ...run, [key]: value };
 
         if (key === "materialId" || key === "nozzleSize" || key === "printerId") {
-          const material = getById(activePrintMaterials, updatedRun.materialId);
+          const material = getPrintMaterialById(settings, updatedRun.materialId);
           const nozzle = getNozzle(settings, updatedRun.nozzleSize);
 
           return {
             ...updatedRun,
+            materialCatalogId: material.catalogId || "",
+            materialLabel: material.label || "",
+            materialType: material.materialType || "",
+            materialColorName: material.colorName || "",
+            materialBambuCode: material.bambuCode || "",
+            materialHexCode: material.hexCode || "",
+            materialCostPerGram: num(material.costPerGram),
             machineRate: suggestedMachineRate(settings, updatedRun.printerId, material, nozzle),
           };
         }
@@ -1266,6 +1388,36 @@ export default function CalculatorPage({
         current.printRuns.length > 1
           ? current.printRuns.filter((run) => run.id !== runId)
           : current.printRuns,
+    }));
+  }
+
+  function refreshCatalogPricing() {
+    const confirmed = window.confirm(
+      `Refresh all print run material prices using ${materialPriceMode.toUpperCase()} catalog pricing?`
+    );
+
+    if (!confirmed) return;
+
+    setMaterialPriceMode(getMaterialPriceMode());
+
+    setForm((current) => ({
+      ...current,
+      printRuns: current.printRuns.map((run) => {
+        const material = getPrintMaterialById(settings, run.materialId);
+        const nozzle = getNozzle(settings, run.nozzleSize);
+
+        return {
+          ...run,
+          materialCatalogId: material.catalogId || "",
+          materialLabel: material.label || "",
+          materialType: material.materialType || "",
+          materialColorName: material.colorName || "",
+          materialBambuCode: material.bambuCode || "",
+          materialHexCode: material.hexCode || "",
+          materialCostPerGram: num(material.costPerGram),
+          machineRate: suggestedMachineRate(settings, run.printerId, material, nozzle),
+        };
+      }),
     }));
   }
 
@@ -1413,8 +1565,7 @@ export default function CalculatorPage({
       editingQuote?.id || null
     );
   }
-
-  return (
+    return (
     <section className="page-panel">
       <div className="page-heading-row">
         <div>
@@ -1424,7 +1575,7 @@ export default function CalculatorPage({
 
           <p className="muted-text">
             Quote builder with customer-facing pricing, internal pricing, templates,
-            materials, machine time, deposits, tax, and markup protection.
+            catalog materials, machine time, deposits, tax, and markup protection.
           </p>
 
           {editingQuote && (
@@ -1726,8 +1877,7 @@ export default function CalculatorPage({
             </div>
           )}
         </div>
-
-        <div className="form-card full-span">
+                <div className="form-card full-span">
           <h3 className="card-title">Project Basics</h3>
 
           <Field
@@ -1793,26 +1943,47 @@ export default function CalculatorPage({
             <div className="page-heading-row">
               <div>
                 <h3 className="card-title">3D Printing</h3>
-                <p className="muted-text">Add one print run for each unique machine/material/nozzle combo.</p>
+                <p className="muted-text">
+                  Add one print run for each unique machine/material/nozzle combo.
+                  Material prices come from the catalog using {materialPriceMode.toUpperCase()} pricing.
+                </p>
               </div>
 
-              <button className="secondary-button" onClick={addPrintRun}>
-                <Plus size={18} />
-                Add Print Run
-              </button>
+              <div className="record-button-row">
+                <button className="secondary-button" type="button" onClick={refreshCatalogPricing}>
+                  <Wand2 size={18} />
+                  Refresh Catalog Pricing
+                </button>
+
+                <button className="secondary-button" type="button" onClick={addPrintRun}>
+                  <Plus size={18} />
+                  Add Print Run
+                </button>
+              </div>
             </div>
 
             <div className="vinyl-lines">
               {form.printRuns.map((run, index) => {
-                const material = getById(activePrintMaterials, run.materialId);
+                const material = getPrintMaterialById(settings, run.materialId);
                 const nozzle = getNozzle(settings, run.nozzleSize);
+                const costPerGram =
+                  run.materialCostPerGram !== undefined && run.materialCostPerGram !== ""
+                    ? num(run.materialCostPerGram)
+                    : num(material.costPerGram);
 
                 return (
                   <div className="vinyl-line" key={run.id}>
                     <div className="vinyl-line-header">
-                      <strong>Print Run {index + 1}</strong>
+                      <strong>
+                        {renderMaterialSwatch(run.materialHexCode || material.hexCode)}
+                        Print Run {index + 1}
+                      </strong>
+
                       <span>
-                        {money(num(run.materialGrams) * num(material.costPerGram) + num(run.machineHours) * num(run.machineRate))}
+                        {money(
+                          num(run.materialGrams) * costPerGram +
+                            num(run.machineHours) * num(run.machineRate)
+                        )}
                       </span>
                     </div>
 
@@ -1821,19 +1992,25 @@ export default function CalculatorPage({
                         <span>Printer</span>
                         <select
                           value={run.printerId}
-                          onChange={(event) => updatePrintRun(run.id, "printerId", event.target.value)}
+                          onChange={(event) =>
+                            updatePrintRun(run.id, "printerId", event.target.value)
+                          }
                         >
                           {activePrinters.map((printer) => (
-                            <option key={printer.id} value={printer.id}>{printer.label}</option>
+                            <option key={printer.id} value={printer.id}>
+                              {printer.label}
+                            </option>
                           ))}
                         </select>
                       </label>
 
                       <label className="field">
-                        <span>Material</span>
+                        <span>Catalog Material</span>
                         <select
                           value={run.materialId}
-                          onChange={(event) => updatePrintRun(run.id, "materialId", event.target.value)}
+                          onChange={(event) =>
+                            updatePrintRun(run.id, "materialId", event.target.value)
+                          }
                         >
                           {activePrintMaterials.map((item) => (
                             <option key={item.id} value={item.id}>
@@ -1847,26 +2024,70 @@ export default function CalculatorPage({
                         <span>Nozzle</span>
                         <select
                           value={run.nozzleSize}
-                          onChange={(event) => updatePrintRun(run.id, "nozzleSize", event.target.value)}
+                          onChange={(event) =>
+                            updatePrintRun(run.id, "nozzleSize", event.target.value)
+                          }
                         >
                           {activeNozzles.map((item) => (
-                            <option key={item.id} value={item.id}>{item.label}</option>
+                            <option key={item.id} value={item.id}>
+                              {item.label}
+                            </option>
                           ))}
                         </select>
                       </label>
 
-                      <Field label="Material Grams" value={run.materialGrams} onChange={(value) => updatePrintRun(run.id, "materialGrams", value)} />
-                      <Field label="Machine Hours" value={run.machineHours} onChange={(value) => updatePrintRun(run.id, "machineHours", value)} />
-                      <Field label="Machine Rate" value={run.machineRate} onChange={(value) => updatePrintRun(run.id, "machineRate", value)} />
+                      <Field
+                        label="Material Grams"
+                        value={run.materialGrams}
+                        onChange={(value) =>
+                          updatePrintRun(run.id, "materialGrams", value)
+                        }
+                      />
 
-                      <button className="secondary-button danger-button" onClick={() => removePrintRun(run.id)}>
+                      <Field
+                        label="Machine Hours"
+                        value={run.machineHours}
+                        onChange={(value) =>
+                          updatePrintRun(run.id, "machineHours", value)
+                        }
+                      />
+
+                      <Field
+                        label="Machine Rate"
+                        value={run.machineRate}
+                        onChange={(value) =>
+                          updatePrintRun(run.id, "machineRate", value)
+                        }
+                      />
+
+                      <Field
+                        label="Material Cost / Gram"
+                        value={costPerGram}
+                        onChange={(value) =>
+                          updatePrintRun(run.id, "materialCostPerGram", value)
+                        }
+                      />
+
+                      <button
+                        className="secondary-button danger-button"
+                        type="button"
+                        onClick={() => removePrintRun(run.id)}
+                      >
                         <Trash2 size={18} />
                         Remove
                       </button>
                     </div>
 
                     <p className="helper-note">
-                      Setup suggestion: {suggestedSetupTier(material, nozzle)} — {setupReason(material, nozzle)}
+                      {material.label || run.materialLabel || "Selected material"}{" "}
+                      {material.bambuCode || run.materialBambuCode
+                        ? `• Code ${material.bambuCode || run.materialBambuCode}`
+                        : ""}
+                      {material.hexCode || run.materialHexCode
+                        ? ` • ${material.hexCode || run.materialHexCode}`
+                        : ""}
+                      {" "}• Setup suggestion: {suggestedSetupTier(material, nozzle)} —{" "}
+                      {setupReason(material, nozzle)}
                     </p>
                   </div>
                 );
@@ -1896,8 +2117,7 @@ export default function CalculatorPage({
             </div>
           </div>
         )}
-
-        {form.jobAspects.engraving && (
+                {form.jobAspects.engraving && (
           <div className="form-card">
             <h3 className="card-title">Laser Engraving</h3>
 
@@ -1909,7 +2129,9 @@ export default function CalculatorPage({
                   onChange={(event) => update("engravingModuleId", event.target.value)}
                 >
                   {activeLasers.map((module) => (
-                    <option key={module.id} value={module.id}>{module.label}</option>
+                    <option key={module.id} value={module.id}>
+                      {module.label}
+                    </option>
                   ))}
                 </select>
               </label>
@@ -1921,7 +2143,9 @@ export default function CalculatorPage({
                   onChange={(event) => updateEngravingMaterial(event.target.value)}
                 >
                   {activeEngravingMaterials.map((material) => (
-                    <option key={material.id} value={material.id}>{material.label}</option>
+                    <option key={material.id} value={material.id}>
+                      {material.label}
+                    </option>
                   ))}
                 </select>
               </label>
@@ -1933,12 +2157,18 @@ export default function CalculatorPage({
                   onChange={(event) => update("engravingMaterialColor", event.target.value)}
                 >
                   {colorsToArray(selectedEngravingMaterial.colors).map((color) => (
-                    <option key={color} value={color}>{color}</option>
+                    <option key={color} value={color}>
+                      {color}
+                    </option>
                   ))}
                 </select>
               </label>
 
-              <Field label="Units" value={form.engravingMaterialUnits} onChange={(value) => update("engravingMaterialUnits", value)} />
+              <Field
+                label="Units"
+                value={form.engravingMaterialUnits}
+                onChange={(value) => update("engravingMaterialUnits", value)}
+              />
 
               <label className="field">
                 <span>Complexity</span>
@@ -1947,15 +2177,25 @@ export default function CalculatorPage({
                   onChange={(event) => update("engravingComplexity", event.target.value)}
                 >
                   {COMPLEXITY_LEVELS.map((level) => (
-                    <option key={level.id} value={level.id}>{level.label}</option>
+                    <option key={level.id} value={level.id}>
+                      {level.label}
+                    </option>
                   ))}
                 </select>
               </label>
 
-              <Field label="Engraving Fee" value={form.engravingFee} onChange={(value) => update("engravingFee", value)} />
+              <Field
+                label="Engraving Fee"
+                value={form.engravingFee}
+                onChange={(value) => update("engravingFee", value)}
+              />
             </div>
 
-            <button className="secondary-button single-row-gap" onClick={applySuggestedEngraving}>
+            <button
+              className="secondary-button single-row-gap"
+              type="button"
+              onClick={applySuggestedEngraving}
+            >
               <Wand2 size={18} />
               Use Suggested Engraving Fee ({money(suggestedEngravingFee)})
             </button>
@@ -1972,7 +2212,7 @@ export default function CalculatorPage({
                 <p className="muted-text">Add one material line per color/layer/material.</p>
               </div>
 
-              <button className="secondary-button" onClick={addVinylLine}>
+              <button className="secondary-button" type="button" onClick={addVinylLine}>
                 <Plus size={18} />
                 Add Line
               </button>
@@ -1985,7 +2225,9 @@ export default function CalculatorPage({
                 onChange={(event) => update("vinylModuleId", event.target.value)}
               >
                 {activeCutters.map((module) => (
-                  <option key={module.id} value={module.id}>{module.label}</option>
+                  <option key={module.id} value={module.id}>
+                    {module.label}
+                  </option>
                 ))}
               </select>
             </label>
@@ -2006,10 +2248,14 @@ export default function CalculatorPage({
                         <span>Material</span>
                         <select
                           value={line.materialId}
-                          onChange={(event) => updateVinylLine(line.id, "materialId", event.target.value)}
+                          onChange={(event) =>
+                            updateVinylLine(line.id, "materialId", event.target.value)
+                          }
                         >
                           {activeVinylMaterials.map((materialOption) => (
-                            <option key={materialOption.id} value={materialOption.id}>{materialOption.label}</option>
+                            <option key={materialOption.id} value={materialOption.id}>
+                              {materialOption.label}
+                            </option>
                           ))}
                         </select>
                       </label>
@@ -2018,17 +2264,29 @@ export default function CalculatorPage({
                         <span>Color</span>
                         <select
                           value={line.color}
-                          onChange={(event) => updateVinylLine(line.id, "color", event.target.value)}
+                          onChange={(event) =>
+                            updateVinylLine(line.id, "color", event.target.value)
+                          }
                         >
                           {colorsToArray(material.colors).map((color) => (
-                            <option key={color} value={color}>{color}</option>
+                            <option key={color} value={color}>
+                              {color}
+                            </option>
                           ))}
                         </select>
                       </label>
 
-                      <Field label="Units" value={line.units} onChange={(value) => updateVinylLine(line.id, "units", value)} />
+                      <Field
+                        label="Units"
+                        value={line.units}
+                        onChange={(value) => updateVinylLine(line.id, "units", value)}
+                      />
 
-                      <button className="secondary-button danger-button" onClick={() => removeVinylLine(line.id)}>
+                      <button
+                        className="secondary-button danger-button"
+                        type="button"
+                        onClick={() => removeVinylLine(line.id)}
+                      >
                         <Trash2 size={18} />
                         Remove
                       </button>
@@ -2046,15 +2304,25 @@ export default function CalculatorPage({
                   onChange={(event) => update("vinylComplexity", event.target.value)}
                 >
                   {COMPLEXITY_LEVELS.map((level) => (
-                    <option key={level.id} value={level.id}>{level.label}</option>
+                    <option key={level.id} value={level.id}>
+                      {level.label}
+                    </option>
                   ))}
                 </select>
               </label>
 
-              <Field label="Vinyl Fee" value={form.vinylFee} onChange={(value) => update("vinylFee", value)} />
+              <Field
+                label="Vinyl Fee"
+                value={form.vinylFee}
+                onChange={(value) => update("vinylFee", value)}
+              />
             </div>
 
-            <button className="secondary-button single-row-gap" onClick={applySuggestedVinyl}>
+            <button
+              className="secondary-button single-row-gap"
+              type="button"
+              onClick={applySuggestedVinyl}
+            >
               <Wand2 size={18} />
               Use Suggested Vinyl Fee ({money(suggestedVinylFee)})
             </button>
@@ -2074,29 +2342,39 @@ export default function CalculatorPage({
                   value={form.integrationComplexity}
                   onChange={(event) => update("integrationComplexity", event.target.value)}
                 >
-                  {Object.keys(settings.integrationCharges).map((key) => (
-                    <option key={key} value={key}>
-                      {key.charAt(0).toUpperCase() + key.slice(1)} — {money(settings.integrationCharges[key])}
-                    </option>
-                  ))}
+                  <option value="none">None</option>
+                  <option value="simple">Simple</option>
+                  <option value="moderate">Moderate</option>
+                  <option value="advanced">Advanced</option>
+                  <option value="complex">Complex</option>
                 </select>
               </label>
 
-              <Field label="Integration Fee" value={form.integrationFee} onChange={(value) => update("integrationFee", value)} />
+              <Field
+                label="Integration Fee"
+                value={form.integrationFee}
+                onChange={(value) => update("integrationFee", value)}
+              />
             </div>
 
-            <button className="secondary-button single-row-gap" onClick={applySuggestedIntegration}>
+            <button
+              className="secondary-button single-row-gap"
+              type="button"
+              onClick={applySuggestedIntegration}
+            >
               <Wand2 size={18} />
               Use Suggested Integration Fee ({money(suggestedIntegration)})
             </button>
 
-            <p className="helper-note">Suggested integration level: {suggestedIntegrationLevel}.</p>
+            <p className="helper-note">
+              Suggested integration level: {suggestedIntegrationLevel}. This covers combining multiple services into one deliverable.
+            </p>
           </div>
         )}
 
         {form.jobAspects.custom && (
           <div className="form-card">
-            <h3 className="card-title">Custom Fabrication</h3>
+            <h3 className="card-title">Custom Work</h3>
 
             <Field
               label="Custom Fee"
@@ -2105,172 +2383,318 @@ export default function CalculatorPage({
             />
           </div>
         )}
-
-        <div className="form-card full-span">
-          <h3 className="card-title">Quantity, Labor, Fees, Tax</h3>
+                <div className="form-card">
+          <h3 className="card-title">Finishing / Extra Labor</h3>
 
           <div className="form-grid">
-            {usesQuantity && (
-              <Field label="Quantity" value={form.quantity} onChange={(value) => update("quantity", value)} />
-            )}
-
-            <Field label="Extra Labor Hours" value={form.extraLaborHours} onChange={(value) => update("extraLaborHours", value)} />
-            <Field label="Extra Labor Rate" value={form.extraLaborRate} onChange={(value) => update("extraLaborRate", value)} />
-            <Field label="Complexity / Risk Fee" value={form.complexityFee} onChange={(value) => update("complexityFee", value)} />
-            <Field label="Finishing / Cleanup Fee" value={form.finishingFee} onChange={(value) => update("finishingFee", value)} />
-            <Field label="Shipping / Delivery Fee" value={form.shippingFee} onChange={(value) => update("shippingFee", value)} />
-            <Field label="Discount" value={form.discount} onChange={(value) => update("discount", value)} />
             <Field
-              label="Internal Buffer Override %"
-              value={form.bufferOverridePercent}
-              onChange={(value) => update("bufferOverridePercent", value)}
-              placeholder={`${totals.autoBufferPercent}`}
+              label="Extra Labor Hours"
+              value={form.extraLaborHours}
+              onChange={(value) => update("extraLaborHours", value)}
             />
-            <Field label="Deposit %" value={form.depositPercent} onChange={(value) => update("depositPercent", value)} />
+
+            <Field
+              label="Extra Labor Rate"
+              value={form.extraLaborRate}
+              onChange={(value) => update("extraLaborRate", value)}
+            />
+
+            <Field
+              label="Complexity Fee"
+              value={form.complexityFee}
+              onChange={(value) => update("complexityFee", value)}
+            />
+
+            <Field
+              label="Finishing Fee"
+              value={form.finishingFee}
+              onChange={(value) => update("finishingFee", value)}
+            />
+
+            <Field
+              label="Shipping / Delivery Fee"
+              value={form.shippingFee}
+              onChange={(value) => update("shippingFee", value)}
+            />
+
+            <Field
+              label="Discount"
+              value={form.discount}
+              onChange={(value) => update("discount", value)}
+            />
+          </div>
+        </div>
+
+        <div className="form-card">
+          <h3 className="card-title">Tax / Deposit / Buffer</h3>
+
+          <div className="form-grid">
+            <Field
+              label="Deposit Percent"
+              value={form.depositPercent}
+              onChange={(value) => update("depositPercent", value)}
+            />
 
             <label className="field checkbox-field">
               <input
                 type="checkbox"
-                checked={Boolean(form.taxEnabled)}
+                checked={form.taxEnabled}
                 onChange={(event) => update("taxEnabled", event.target.checked)}
               />
               <span>Charge Tax</span>
             </label>
 
             {form.taxEnabled && (
-              <Field label="Tax %" value={form.taxPercent} onChange={(value) => update("taxPercent", value)} />
+              <Field
+                label="Tax Percent"
+                value={form.taxPercent}
+                onChange={(value) => update("taxPercent", value)}
+              />
             )}
+
+            <Field
+              label="Buffer Override %"
+              value={form.bufferOverridePercent}
+              placeholder={`${totals.autoBufferPercent}`}
+              onChange={(value) => update("bufferOverridePercent", value)}
+            />
           </div>
 
-          <label className="field single-row-gap">
-            <span>Project Notes</span>
+          <p className="helper-note">
+            Auto buffer: {totals.autoBufferPercent}% • Applied buffer:{" "}
+            {totals.appliedBufferPercent}% • {totals.minimumReason}
+          </p>
+        </div>
+
+        <div className="form-card full-span">
+          <h3 className="card-title">Project Notes</h3>
+
+          <label className="field">
+            <span>Internal / Quote Notes</span>
             <textarea
               value={form.notes}
               onChange={(event) => update("notes", event.target.value)}
-              placeholder="Customer requests, print settings, tolerances, material notes, delivery notes, etc."
+              placeholder="Scope, materials, customer requests, fitment notes, approval notes, etc."
             />
           </label>
         </div>
-      </div>
 
-      <aside className="quote-summary">
-        <div className="page-heading-row">
-          <div>
-            <h3 className="card-title">
-              {summaryMode === "customer" ? "Customer Quote Summary" : "Internal Quote Breakdown"}
-            </h3>
-            <p className="muted-text">
-              {summaryMode === "customer"
-                ? "Customer-safe pricing. Buffer and markup are hidden."
-                : "Internal-only pricing. Do not show this view to customers."}
-            </p>
-          </div>
-        </div>
+        <div className="form-card full-span sticky-summary-card">
+          <div className="page-heading-row">
+            <div>
+              <h3 className="card-title">
+                {summaryMode === "customer" ? "Customer Summary" : "Internal Summary"}
+              </h3>
 
-        <div className="summary-total">{money(totals.finalTotal)}</div>
+              <p className="muted-text">
+                {summaryMode === "customer"
+                  ? "Customer view hides buffer/internal markup details."
+                  : "Internal view shows cost buildup, buffer, and margin protection."}
+              </p>
+            </div>
 
-        {usesQuantity && (
-          <p className="helper-note">
-            {money(totals.perUnit)} per unit at quantity {totals.quantity}
-          </p>
-        )}
-
-        <div className="summary-grid">
-          <div>
-            <span>Deposit</span>
-            <strong>{money(totals.suggestedDeposit)}</strong>
+            <button className="primary-button" onClick={saveQuote}>
+              <Save size={18} />
+              {editingQuote ? "Save Quote Changes" : "Save Quote"}
+            </button>
           </div>
 
-          <div>
-            <span>Remaining</span>
-            <strong>{money(totals.remainingBalance)}</strong>
-          </div>
-
-          <div>
-            <span>Subtotal</span>
-            <strong>{money(totals.subtotal)}</strong>
-          </div>
-
-          <div>
-            <span>Tax</span>
-            <strong>{money(totals.tax)}</strong>
-          </div>
-        </div>
-
-        {summaryMode === "customer" ? (
-          <>
-            <div className="breakdown-list">
-              {customerFacingLines.length === 0 ? (
-                <div>
-                  <span>Project Total</span>
-                  <strong>{money(totals.subtotal)}</strong>
-                </div>
-              ) : (
-                customerFacingLines.map(([label, value]) => (
+          {summaryMode === "customer" ? (
+            <>
+              <div className="summary-grid">
+                {customerFacingLines.map(([label, value]) => (
                   <div key={label}>
                     <span>{label}</span>
                     <strong>{money(value)}</strong>
                   </div>
-                ))
-              )}
+                ))}
 
-              {num(form.discount) > 0 && (
+                {form.discount > 0 && (
+                  <div>
+                    <span>Discount</span>
+                    <strong>-{money(form.discount)}</strong>
+                  </div>
+                )}
+
+                {form.taxEnabled && (
+                  <div>
+                    <span>Tax</span>
+                    <strong>{money(totals.tax)}</strong>
+                  </div>
+                )}
+
+                <div>
+                  <span>Quantity</span>
+                  <strong>{totals.quantity}</strong>
+                </div>
+
+                <div>
+                  <span>Per Unit</span>
+                  <strong>{money(totals.perUnit)}</strong>
+                </div>
+
+                <div className="summary-total">
+                  <span>Final Total</span>
+                  <strong>{money(totals.finalTotal)}</strong>
+                </div>
+
+                <div>
+                  <span>Suggested Deposit</span>
+                  <strong>{money(totals.suggestedDeposit)}</strong>
+                </div>
+
+                <div>
+                  <span>Remaining Balance</span>
+                  <strong>{money(totals.remainingBalance)}</strong>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="summary-grid">
+                <div>
+                  <span>Print Material Cost</span>
+                  <strong>{money(totals.printMaterialCost)}</strong>
+                </div>
+
+                <div>
+                  <span>Engraving Material Cost</span>
+                  <strong>{money(totals.engravingMaterialCost)}</strong>
+                </div>
+
+                <div>
+                  <span>Vinyl Material Cost</span>
+                  <strong>{money(totals.vinylMaterialCost)}</strong>
+                </div>
+
+                <div>
+                  <span>Total Material Cost</span>
+                  <strong>{money(totals.materialCost)}</strong>
+                </div>
+
+                <div>
+                  <span>Machine Cost</span>
+                  <strong>{money(totals.machineCost)}</strong>
+                </div>
+
+                <div>
+                  <span>CAD Cost</span>
+                  <strong>{money(totals.cadCost)}</strong>
+                </div>
+
+                <div>
+                  <span>Engraving Fee</span>
+                  <strong>{money(totals.engravingCost)}</strong>
+                </div>
+
+                <div>
+                  <span>Vinyl Fee</span>
+                  <strong>{money(totals.vinylCost)}</strong>
+                </div>
+
+                <div>
+                  <span>Integration Fee</span>
+                  <strong>{money(totals.integrationCost)}</strong>
+                </div>
+
+                <div>
+                  <span>Custom Fee</span>
+                  <strong>{money(totals.customCost)}</strong>
+                </div>
+
+                <div>
+                  <span>Extra Labor</span>
+                  <strong>{money(totals.extraLaborCost)}</strong>
+                </div>
+
+                <div>
+                  <span>Setup Fee</span>
+                  <strong>{money(totals.setupFee)}</strong>
+                </div>
+
+                <div>
+                  <span>Direct Subtotal</span>
+                  <strong>{money(totals.directSubtotal)}</strong>
+                </div>
+
+                <div>
+                  <span>Quote Buffer</span>
+                  <strong>{money(totals.quoteBuffer)}</strong>
+                </div>
+
+                <div>
+                  <span>Minimum Adjustment</span>
+                  <strong>{money(totals.minimumAdjustment)}</strong>
+                </div>
+
+                <div>
+                  <span>Subtotal Before Discount</span>
+                  <strong>{money(totals.subtotalBeforeDiscount)}</strong>
+                </div>
+
                 <div>
                   <span>Discount</span>
                   <strong>-{money(form.discount)}</strong>
                 </div>
-              )}
 
-              {totals.tax > 0 && (
                 <div>
                   <span>Tax</span>
                   <strong>{money(totals.tax)}</strong>
                 </div>
-              )}
-            </div>
 
-            <p className="helper-note">
-              Customer view hides internal buffer, risk markup, machine rates, material cost, and market ranges.
-            </p>
-          </>
-        ) : (
-          <>
-            <div className="breakdown-list">
-              <div><span>CAD</span><strong>{money(totals.cadCost)}</strong></div>
-              <div><span>Materials</span><strong>{money(totals.materialCost)}</strong></div>
-              <div><span>Machine Time</span><strong>{money(totals.machineCost)}</strong></div>
-              <div><span>Print Setup</span><strong>{money(totals.setupFee)}</strong></div>
-              <div><span>Engraving</span><strong>{money(totals.engravingCost)}</strong></div>
-              <div><span>Vinyl</span><strong>{money(totals.vinylCost)}</strong></div>
-              <div><span>Integration</span><strong>{money(totals.integrationCost)}</strong></div>
-              <div><span>Custom</span><strong>{money(totals.customCost)}</strong></div>
-              <div><span>Labor</span><strong>{money(totals.extraLaborCost)}</strong></div>
-              <div><span>Buffer</span><strong>{totals.appliedBufferPercent}% / {money(totals.quoteBuffer)}</strong></div>
-              <div><span>Minimum Adj.</span><strong>{money(totals.minimumAdjustment)}</strong></div>
-            </div>
+                <div className="summary-total">
+                  <span>Final Total</span>
+                  <strong>{money(totals.finalTotal)}</strong>
+                </div>
 
-            <div className="market-box">
-              <div><span>Budget Market</span><strong>{money(totals.market.budgetLow)}–{money(totals.market.budgetHigh)}</strong></div>
-              <div><span>Average Market</span><strong>{money(totals.market.averageLow)}–{money(totals.market.averageHigh)}</strong></div>
-              <div><span>Premium Market</span><strong>{money(totals.market.premiumLow)}–{money(totals.market.premiumHigh)}</strong></div>
-            </div>
+                <div>
+                  <span>Deposit</span>
+                  <strong>{money(totals.suggestedDeposit)}</strong>
+                </div>
 
-            <p className="helper-note">{totals.minimumReason}</p>
-          </>
-        )}
+                <div>
+                  <span>Remaining</span>
+                  <strong>{money(totals.remainingBalance)}</strong>
+                </div>
+              </div>
 
-        <button className="primary-button" onClick={saveQuote}>
-          <Save size={18} />
-          {editingQuote ? "Save Quote Changes" : "Save Quote"}
-        </button>
+              <div className="form-card single-row-gap">
+                <h3 className="card-title">Market Position Estimate</h3>
 
-        {editingQuote && (
-          <button className="secondary-button single-row-gap" onClick={onCancelEdit}>
-            <XCircle size={18} />
-            Cancel Edit
-          </button>
-        )}
-      </aside>
+                <div className="summary-grid">
+                  <div>
+                    <span>Budget Range</span>
+                    <strong>
+                      {money(totals.market.budgetLow)} – {money(totals.market.budgetHigh)}
+                    </strong>
+                  </div>
+
+                  <div>
+                    <span>Average Range</span>
+                    <strong>
+                      {money(totals.market.averageLow)} – {money(totals.market.averageHigh)}
+                    </strong>
+                  </div>
+
+                  <div>
+                    <span>Premium Range</span>
+                    <strong>
+                      {money(totals.market.premiumLow)} – {money(totals.market.premiumHigh)}
+                    </strong>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+
+          {editingQuote && (
+            <button className="secondary-button single-row-gap" onClick={onCancelEdit}>
+              <XCircle size={18} />
+              Cancel Editing
+            </button>
+          )}
+        </div>
+      </div>
     </section>
   );
 }

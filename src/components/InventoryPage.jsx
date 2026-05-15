@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
 import {
   AlertTriangle,
-  Archive,
   Download,
   Edit,
+  Eye,
   PackagePlus,
   Plus,
   Save,
@@ -12,6 +12,17 @@ import {
   Upload,
   XCircle,
 } from "lucide-react";
+import {
+  MATERIAL_CATALOG,
+  MATERIAL_PRICE_MODES,
+  createInventoryItemFromCatalog,
+  getMaterialCatalogCategories,
+  getMaterialDisplayLabel,
+  getMaterialPrice,
+  getOwnedQuantityForCatalog,
+  matchCatalogFromInventoryText,
+  searchMaterialCatalog,
+} from "../data/materialCatalog";
 
 const RAW_STARTER_INVENTORY = `Yc002 20mm stainless steel tag x4
 Yd006 rectangular pu iron on patch rustic to gold x5
@@ -116,6 +127,12 @@ const EMPTY_ITEM = {
   unitCost: 0,
   vendor: "",
   sku: "",
+  bambuCode: "",
+  hexCode: "",
+  catalogId: "",
+  msrp: 0,
+  bulkPrice: 0,
+  spoolWeightGrams: 0,
   notes: "",
   active: true,
 };
@@ -179,6 +196,9 @@ function matchesItem(item, searchTerm, categoryFilter, stockFilter) {
       item.location,
       item.vendor,
       item.sku,
+      item.bambuCode,
+      item.catalogId,
+      item.hexCode,
       item.notes,
     ]
       .filter(Boolean)
@@ -253,7 +273,7 @@ function parseQuantity(line) {
   };
 }
 
-function inferInventoryItem(rawLine) {
+function inferFallbackInventoryItem(rawLine) {
   const line = clean(rawLine);
 
   if (!line) return null;
@@ -419,16 +439,54 @@ function inferInventoryItem(rawLine) {
     unitCost: 0,
     vendor: "",
     sku,
+    bambuCode: sku,
+    hexCode: "",
+    catalogId: "",
+    msrp: 0,
+    bulkPrice: 0,
+    spoolWeightGrams: 0,
     notes,
     active: true,
   };
 }
 
-function parseBulkInventory(rawText) {
+function inferInventoryItem(rawLine, priceMode) {
+  const line = clean(rawLine);
+
+  if (!line) return null;
+
+  const quantityInfo = parseQuantity(line);
+  const catalogMatch = matchCatalogFromInventoryText(line);
+
+  if (catalogMatch) {
+    return createInventoryItemFromCatalog(catalogMatch, {
+      quantityOnHand: quantityInfo.quantity,
+      unit: quantityInfo.unit || catalogMatch.unit,
+      priceMode,
+      notes:
+        quantityInfo.statusNote ||
+        "Imported from raw starter inventory list and matched to material catalog.",
+    });
+  }
+
+  return inferFallbackInventoryItem(line);
+}
+
+function parseBulkInventory(rawText, priceMode) {
   return rawText
     .split("\n")
-    .map((line) => inferInventoryItem(line))
+    .map((line) => inferInventoryItem(line, priceMode))
     .filter(Boolean);
+}
+
+function swatchStyle(hexCode) {
+  return {
+    background: hexCode || "transparent",
+    border:
+      hexCode && hexCode.toLowerCase() === "#ffffff"
+        ? "1px solid #bbb"
+        : undefined,
+  };
 }
 
 function Field({
@@ -451,7 +509,6 @@ function Field({
     </label>
   );
 }
-
 export default function InventoryPage({
   inventoryItems = [],
   inventoryLogs = [],
@@ -466,8 +523,15 @@ export default function InventoryPage({
   const [categoryFilter, setCategoryFilter] = useState("All");
   const [stockFilter, setStockFilter] = useState("All");
 
+  const [catalogSearch, setCatalogSearch] = useState("");
+  const [catalogCategoryFilter, setCatalogCategoryFilter] = useState("All");
+  const [priceMode, setPriceMode] = useState(
+    localStorage.getItem("overkill_material_price_mode") || "msrp"
+  );
+
   const [showAddItem, setShowAddItem] = useState(false);
   const [showBulkImport, setShowBulkImport] = useState(true);
+  const [showCatalog, setShowCatalog] = useState(true);
   const [bulkText, setBulkText] = useState(RAW_STARTER_INVENTORY);
 
   const [itemDraft, setItemDraft] = useState(EMPTY_ITEM);
@@ -478,9 +542,20 @@ export default function InventoryPage({
   const [adjustmentDraft, setAdjustmentDraft] =
     useState(EMPTY_ADJUSTMENT);
 
+  const catalogCategories = useMemo(() => {
+    return getMaterialCatalogCategories();
+  }, []);
+
   const parsedBulkItems = useMemo(() => {
-    return parseBulkInventory(bulkText);
-  }, [bulkText]);
+    return parseBulkInventory(bulkText, priceMode);
+  }, [bulkText, priceMode]);
+
+  const filteredCatalogItems = useMemo(() => {
+    return searchMaterialCatalog(
+      catalogSearch,
+      catalogCategoryFilter
+    ).slice(0, 200);
+  }, [catalogSearch, catalogCategoryFilter]);
 
   const filteredItems = useMemo(() => {
     return inventoryItems
@@ -543,6 +618,10 @@ export default function InventoryPage({
           summary.outOfStock += 1;
         }
 
+        if (item.catalogId || item.bambuCode || item.hexCode) {
+          summary.catalogLinked += 1;
+        }
+
         return summary;
       },
       {
@@ -552,9 +631,15 @@ export default function InventoryPage({
         lowStock: 0,
         outOfStock: 0,
         totalValue: 0,
+        catalogLinked: 0,
       }
     );
   }, [inventoryItems]);
+
+  function updatePriceMode(nextMode) {
+    setPriceMode(nextMode);
+    localStorage.setItem("overkill_material_price_mode", nextMode);
+  }
 
   function updateItemDraft(key, value) {
     setItemDraft((current) => ({
@@ -589,6 +674,32 @@ export default function InventoryPage({
     setShowAddItem(false);
   }
 
+  function addCatalogItemToInventory(catalogItem) {
+    const quantity = window.prompt(
+      `How many ${catalogItem.unit || "units"} of ${getMaterialDisplayLabel(
+        catalogItem
+      )} do you currently have?`,
+      catalogItem.category === "Filament" ? "1" : "0"
+    );
+
+    if (quantity === null) return;
+
+    const parsedQuantity = Number(quantity || 0);
+
+    if (Number.isNaN(parsedQuantity)) {
+      window.alert("Enter a valid quantity.");
+      return;
+    }
+
+    onAddItem(
+      createInventoryItemFromCatalog(catalogItem, {
+        quantityOnHand: parsedQuantity,
+        priceMode,
+        notes: `Added from material catalog using ${priceMode.toUpperCase()} pricing.`,
+      })
+    );
+  }
+
   function importBulkInventory() {
     if (parsedBulkItems.length === 0) {
       window.alert("No inventory items were detected.");
@@ -620,7 +731,9 @@ export default function InventoryPage({
       quantityAfter: Number(item.quantityOnHand || 0),
       unit: item.unit,
       jobNumber: "",
-      notes: "Imported from raw starter inventory list.",
+      notes: item.catalogId
+        ? "Imported from raw starter inventory list and matched to material catalog."
+        : "Imported from raw starter inventory list.",
       createdAt: now,
     }));
 
@@ -728,6 +841,11 @@ export default function InventoryPage({
       "Stock Value",
       "Vendor",
       "SKU",
+      "Bambu Code",
+      "Hex Code",
+      "Catalog ID",
+      "MSRP",
+      "Bulk Price",
       "Active",
       "Notes",
     ];
@@ -746,6 +864,11 @@ export default function InventoryPage({
       getInventoryValue(item),
       item.vendor,
       item.sku,
+      item.bambuCode,
+      item.hexCode,
+      item.catalogId,
+      item.msrp,
+      item.bulkPrice,
       item.active !== false ? "Yes" : "No",
       item.notes,
     ]);
@@ -786,7 +909,18 @@ export default function InventoryPage({
     URL.revokeObjectURL(url);
   }
 
-  function renderItemForm(draft, updateFn) {
+  function renderColorSwatch(hexCode) {
+    if (!hexCode) return null;
+
+    return (
+      <span
+        className="material-color-swatch"
+        style={swatchStyle(hexCode)}
+        title={hexCode}
+      />
+    );
+  }
+    function renderItemForm(draft, updateFn) {
     return (
       <>
         <div className="form-grid">
@@ -922,6 +1056,48 @@ export default function InventoryPage({
             }
           />
 
+          <Field
+            label="Bambu Code"
+            value={draft.bambuCode || ""}
+            onChange={(value) =>
+              updateFn("bambuCode", value)
+            }
+          />
+
+          <Field
+            label="Hex Code"
+            value={draft.hexCode || ""}
+            onChange={(value) =>
+              updateFn("hexCode", value)
+            }
+          />
+
+          <Field
+            label="Catalog ID"
+            value={draft.catalogId || ""}
+            onChange={(value) =>
+              updateFn("catalogId", value)
+            }
+          />
+
+          <Field
+            label="MSRP"
+            type="number"
+            value={draft.msrp || 0}
+            onChange={(value) =>
+              updateFn("msrp", value)
+            }
+          />
+
+          <Field
+            label="Bulk Price"
+            type="number"
+            value={draft.bulkPrice || 0}
+            onChange={(value) =>
+              updateFn("bulkPrice", value)
+            }
+          />
+
           <label className="field checkbox-field">
             <input
               type="checkbox"
@@ -964,9 +1140,8 @@ export default function InventoryPage({
           </h2>
 
           <p className="muted-text">
-            Track filament, resin, blanks,
-            vinyl, hardware, stock levels,
-            and usage.
+            Track owned stock separately from the material catalog. Catalog is what
+            you can get; inventory is what you actually have.
           </p>
         </div>
 
@@ -978,6 +1153,19 @@ export default function InventoryPage({
           >
             <Download size={18} />
             Export CSV
+          </button>
+
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() =>
+              setShowCatalog(!showCatalog)
+            }
+          >
+            <Eye size={18} />
+            {showCatalog
+              ? "Hide Catalog"
+              : "Show Catalog"}
           </button>
 
           <button
@@ -1011,8 +1199,18 @@ export default function InventoryPage({
 
       <div className="job-queue-summary">
         <div>
-          <span>Total Items</span>
+          <span>Owned Items</span>
           <strong>{stats.totalItems}</strong>
+        </div>
+
+        <div>
+          <span>Catalog Items</span>
+          <strong>{MATERIAL_CATALOG.length}</strong>
+        </div>
+
+        <div>
+          <span>Catalog Linked</span>
+          <strong>{stats.catalogLinked}</strong>
         </div>
 
         <div>
@@ -1038,6 +1236,11 @@ export default function InventoryPage({
         </div>
 
         <div>
+          <span>Pricing Mode</span>
+          <strong>{priceMode.toUpperCase()}</strong>
+        </div>
+
+        <div>
           <span>Logs</span>
           <strong>
             {inventoryLogs.length}
@@ -1045,7 +1248,172 @@ export default function InventoryPage({
         </div>
       </div>
 
-      {showBulkImport && (
+      <div className="form-card">
+        <div className="page-heading-row">
+          <div>
+            <h3 className="card-title">
+              Material Pricing Mode
+            </h3>
+
+            <p className="muted-text">
+              Used when adding catalog materials to inventory or bulk importing
+              matched items.
+            </p>
+          </div>
+
+          <label className="filter-select-field">
+            <span>Price Mode</span>
+
+            <select
+              value={priceMode}
+              onChange={(event) =>
+                updatePriceMode(event.target.value)
+              }
+            >
+              {MATERIAL_PRICE_MODES.map((mode) => (
+                <option key={mode.id} value={mode.id}>
+                  {mode.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </div>
+
+      {showCatalog && (
+        <div className="form-card">
+          <div className="page-heading-row">
+            <div>
+              <h3 className="card-title">
+                Material Catalog — Can Get
+              </h3>
+
+              <p className="muted-text">
+                Search Bambu filament, engraving blanks, cutting materials,
+                vinyl, acrylic, wood, leatherette, paper, and cork.
+              </p>
+            </div>
+          </div>
+
+          <div className="filter-toolbar">
+            <label className="search-field">
+              <Search size={18} />
+
+              <input
+                type="search"
+                value={catalogSearch}
+                placeholder="Search catalog by material, color, code, hex, category..."
+                onChange={(event) =>
+                  setCatalogSearch(event.target.value)
+                }
+              />
+            </label>
+
+            <label className="filter-select-field">
+              <span>Category</span>
+
+              <select
+                value={catalogCategoryFilter}
+                onChange={(event) =>
+                  setCatalogCategoryFilter(
+                    event.target.value
+                  )
+                }
+              >
+                <option value="All">
+                  All Categories
+                </option>
+
+                {catalogCategories.map((category) => (
+                  <option
+                    key={category}
+                    value={category}
+                  >
+                    {category}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div className="filter-count-pill">
+              Showing {filteredCatalogItems.length} of{" "}
+              {MATERIAL_CATALOG.length}
+            </div>
+          </div>
+
+          <div className="dashboard-list single-row-gap">
+            {filteredCatalogItems.map((catalogItem) => {
+              const ownedQuantity =
+                getOwnedQuantityForCatalog(
+                  inventoryItems,
+                  catalogItem
+                );
+
+              const price = getMaterialPrice(
+                catalogItem,
+                priceMode
+              );
+
+              return (
+                <div
+                  className="dashboard-list-row"
+                  key={catalogItem.id}
+                >
+                  <div>
+                    <strong>
+                      {renderColorSwatch(
+                        catalogItem.hexCode
+                      )}
+
+                      {getMaterialDisplayLabel(
+                        catalogItem
+                      )}
+                    </strong>
+
+                    <span>
+                      {catalogItem.category} •{" "}
+                      {catalogItem.materialType} •{" "}
+                      {catalogItem.hexCode || "No hex"} •{" "}
+                      {money(price)}
+                    </span>
+
+                    <small>
+                      Owned: {ownedQuantity}{" "}
+                      {catalogItem.unit || "units"} • MSRP{" "}
+                      {money(catalogItem.msrp)} • Bulk{" "}
+                      {money(catalogItem.bulkPrice)}
+                    </small>
+                  </div>
+
+                  <div className="dashboard-status-stack">
+                    {ownedQuantity > 0 ? (
+                      <span className="status-pill">
+                        Owned
+                      </span>
+                    ) : (
+                      <span className="status-pill">
+                        Can Get
+                      </span>
+                    )}
+
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      onClick={() =>
+                        addCatalogItemToInventory(catalogItem)
+                      }
+                    >
+                      <Plus size={14} />
+                      Add to Inventory
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+            {showBulkImport && (
         <div className="form-card customer-create-card">
           <div className="page-heading-row">
             <div>
@@ -1054,8 +1422,8 @@ export default function InventoryPage({
               </h3>
 
               <p className="muted-text">
-                Paste raw inventory lines here. Plain colors become PLA Basic,
-                x6 becomes quantity 6, and “full” becomes one full roll.
+                Paste raw inventory lines here. Codes like (10501) auto-match
+                the catalog and pull color, hex, price, and Bambu code.
               </p>
             </div>
 
@@ -1092,13 +1460,16 @@ export default function InventoryPage({
               </p>
             ) : (
               <div className="dashboard-list">
-                {parsedBulkItems.slice(0, 20).map((item) => (
+                {parsedBulkItems.slice(0, 30).map((item) => (
                   <div
                     className="dashboard-list-row"
                     key={item.id}
                   >
                     <div>
-                      <strong>{item.name}</strong>
+                      <strong>
+                        {renderColorSwatch(item.hexCode)}
+                        {item.name}
+                      </strong>
 
                       <span>
                         {item.category}
@@ -1108,6 +1479,9 @@ export default function InventoryPage({
                         {item.color
                           ? ` • ${item.color}`
                           : ""}
+                        {item.bambuCode || item.sku
+                          ? ` • ${item.bambuCode || item.sku}`
+                          : ""}
                       </span>
 
                       {item.notes && (
@@ -1116,14 +1490,15 @@ export default function InventoryPage({
                     </div>
 
                     <span className="status-pill">
-                      {item.quantityOnHand} {item.unit}
+                      {item.quantityOnHand} {item.unit} •{" "}
+                      {money(item.unitCost)}
                     </span>
                   </div>
                 ))}
 
-                {parsedBulkItems.length > 20 && (
+                {parsedBulkItems.length > 30 && (
                   <p className="helper-note">
-                    Showing first 20 of {parsedBulkItems.length} parsed items.
+                    Showing first 30 of {parsedBulkItems.length} parsed items.
                   </p>
                 )}
               </div>
@@ -1179,7 +1554,7 @@ export default function InventoryPage({
           <input
             type="search"
             value={searchTerm}
-            placeholder="Search inventory..."
+            placeholder="Search owned inventory..."
             onChange={(event) =>
               setSearchTerm(
                 event.target.value
@@ -1444,7 +1819,10 @@ export default function InventoryPage({
                 <>
                   <div className="record-card-top">
                     <div>
-                      <h3>{item.name}</h3>
+                      <h3>
+                        {renderColorSwatch(item.hexCode)}
+                        {item.name}
+                      </h3>
 
                       <p>
                         {item.category}
@@ -1454,17 +1832,28 @@ export default function InventoryPage({
                         {item.color
                           ? ` • ${item.color}`
                           : ""}
+                        {item.bambuCode || item.sku
+                          ? ` • ${item.bambuCode || item.sku}`
+                          : ""}
                       </p>
                     </div>
 
-                    {lowStock && (
-                      <span className="status-pill">
-                        <AlertTriangle
-                          size={14}
-                        />
-                        Low Stock
-                      </span>
-                    )}
+                    <div className="dashboard-status-stack">
+                      {item.catalogId && (
+                        <span className="status-pill">
+                          Catalog Linked
+                        </span>
+                      )}
+
+                      {lowStock && (
+                        <span className="status-pill">
+                          <AlertTriangle
+                            size={14}
+                          />
+                          Low Stock
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   <div className="inventory-stock-display">
@@ -1520,6 +1909,22 @@ export default function InventoryPage({
                             item
                           )
                         )}
+                      </strong>
+                    </div>
+
+                    <div>
+                      <span>MSRP</span>
+
+                      <strong>
+                        {money(item.msrp || 0)}
+                      </strong>
+                    </div>
+
+                    <div>
+                      <span>Bulk</span>
+
+                      <strong>
+                        {money(item.bulkPrice || 0)}
                       </strong>
                     </div>
                   </div>
