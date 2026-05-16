@@ -194,43 +194,54 @@ export default function App() {
   }
 
   function addInventoryItem(itemData) {
-    const now = new Date().toISOString();
+  const now = new Date().toISOString();
 
-    const newItem = {
-      id: crypto.randomUUID(),
-      createdAt: now,
-      updatedAt: now,
-      name: itemData.name || "New Inventory Item",
-      category: itemData.category || "Filament",
-      material: itemData.material || "",
-      color: itemData.color || "",
-      brand: itemData.brand || "",
-      location: itemData.location || "",
-      unit: itemData.unit || "g",
-      quantityOnHand: Number(itemData.quantityOnHand || 0),
-      reorderThreshold: Number(itemData.reorderThreshold || 0),
-      unitCost: Number(itemData.unitCost || 0),
-      vendor: itemData.vendor || "",
-      sku: itemData.sku || "",
-      notes: itemData.notes || "",
-      active: itemData.active !== false,
-    };
+  const newItem = {
+    id: itemData.id || crypto.randomUUID(),
+    createdAt: itemData.createdAt || now,
+    updatedAt: now,
 
-    const log = {
-      id: crypto.randomUUID(),
-      itemId: newItem.id,
-      itemName: newItem.name,
-      type: "Created",
-      quantityChange: Number(newItem.quantityOnHand || 0),
-      quantityAfter: Number(newItem.quantityOnHand || 0),
-      unit: newItem.unit,
-      jobNumber: "",
-      notes: "Inventory item created.",
-      createdAt: now,
-    };
+    name: itemData.name || "New Inventory Item",
+    category: itemData.category || "Filament",
+    material: itemData.material || "",
+    color: itemData.color || "",
+    brand: itemData.brand || "",
+    location: itemData.location || "",
 
-    saveInventory([newItem, ...inventoryItems], [log, ...inventoryLogs]);
-  }
+    unit: itemData.unit || "g",
+    quantityOnHand: Number(itemData.quantityOnHand || 0),
+    reorderThreshold: Number(itemData.reorderThreshold || 0),
+    unitCost: Number(itemData.unitCost || 0),
+
+    vendor: itemData.vendor || "",
+    sku: itemData.sku || "",
+
+    catalogId: itemData.catalogId || "",
+    bambuCode: itemData.bambuCode || itemData.sku || "",
+    hexCode: itemData.hexCode || "",
+    msrp: Number(itemData.msrp || 0),
+    bulkPrice: Number(itemData.bulkPrice || 0),
+    spoolWeightGrams: Number(itemData.spoolWeightGrams || 0),
+
+    notes: itemData.notes || "",
+    active: itemData.active !== false,
+  };
+
+  const log = {
+    id: crypto.randomUUID(),
+    itemId: newItem.id,
+    itemName: newItem.name,
+    type: "Created",
+    quantityChange: Number(newItem.quantityOnHand || 0),
+    quantityAfter: Number(newItem.quantityOnHand || 0),
+    unit: newItem.unit,
+    jobNumber: "",
+    notes: "Inventory item created.",
+    createdAt: now,
+  };
+
+  saveInventory([newItem, ...inventoryItems], [log, ...inventoryLogs]);
+}
 
   function updateInventoryItem(itemId, updates) {
     const nextItems = inventoryItems.map((item) =>

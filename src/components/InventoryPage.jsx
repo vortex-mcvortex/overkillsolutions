@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import {
   AlertTriangle,
+  ChevronDown,
+  ChevronRight,
   Download,
   Edit,
   Eye,
@@ -24,57 +26,7 @@ import {
   searchMaterialCatalog,
 } from "../data/materialCatalog";
 
-const RAW_STARTER_INVENTORY = `Yc002 20mm stainless steel tag x4
-Yd006 rectangular pu iron on patch rustic to gold x5
-Ye004 pearlescent white greeting card x5
-Yc001 Black aluminum office card x8
-Ye002 a4 250g white cardstock x
-Ya001 3mm basswood plywood x6
-Yl001 2mm cork sheet x7
-Ya004 3mm sapele plywood x5.5
-Yb002 3mm red opaque glossy acrylic x3
-Yd001 black pebbled pu leatherette fabric
-Yg015 green matte removable vinyl
-Yz002 light gray reflective decal sheet
-Yg018 carbon fiber textured removable
-Yd002 white pebbled pu leatherette
-Yg002 red matte heat transfer vinyl
-Yc003 30mm stainless steel tags
-Glow
-Tan
-Pla basic Green (10501) full
-Pla basic Green (10501)
-Pla matte Ice blue (11601) full
-Pla metal Iron grey metallic (13100) full
-Petg hf green (33500) full
-Pla basic blue grey (10602) full
-Pla basic indigo purple (10701) full
-Pla basic silver (10102) full
-Abs black (40101) full
-Pla sparkle slate grey sparkle (13102) full
-Light blue
-Galaxy purple
-Blue and green shift
-Black cf
-Pink and orange shift
-Blue
-Turquoise/teal
-Galaxy silver
-Grey
-Gold sparkle
-Matte white
-Translucent
-Purple and red shift
-Pink and blue shift
-Red
-White
-Purple
-Black
-Orange
-Hot pink
-Sparkle crimson
-Matte black sparkle
-Yellow`;
+const RAW_STARTER_INVENTORY = ''
 
 const CATEGORIES = [
   "Filament",
@@ -202,9 +154,7 @@ function matchesItem(item, searchTerm, categoryFilter, stockFilter) {
       item.notes,
     ]
       .filter(Boolean)
-      .some((value) =>
-        String(value).toLowerCase().includes(search)
-      );
+      .some((value) => String(value).toLowerCase().includes(search));
 
   const categoryMatches =
     categoryFilter === "All" || item.category === categoryFilter;
@@ -213,8 +163,7 @@ function matchesItem(item, searchTerm, categoryFilter, stockFilter) {
     stockFilter === "All" ||
     (stockFilter === "Low Stock" && isLowStock(item)) ||
     (stockFilter === "In Stock" && num(item.quantityOnHand) > 0) ||
-    (stockFilter === "Out of Stock" &&
-      num(item.quantityOnHand) <= 0) ||
+    (stockFilter === "Out of Stock" && num(item.quantityOnHand) <= 0) ||
     (stockFilter === "Inactive" && item.active === false) ||
     (stockFilter === "Active" && item.active !== false);
 
@@ -226,22 +175,40 @@ function matchesLog(log, searchTerm) {
 
   if (!search) return true;
 
-  return [
-    log.itemName,
-    log.type,
-    log.jobNumber,
-    log.notes,
-    log.unit,
-  ]
+  return [log.itemName, log.type, log.jobNumber, log.notes, log.unit]
     .filter(Boolean)
-    .some((value) =>
-      String(value).toLowerCase().includes(search)
-    );
+    .some((value) => String(value).toLowerCase().includes(search));
 }
 
 function parseQuantity(line) {
-  const quantityMatch = line.match(/\sx\s*([\d.]+)?\s*$/i);
-  const fullMatch = /\bfull\b/i.test(line);
+  const rawLine = String(line || "").trim();
+
+  const gramMatch = rawLine.match(/\b([\d.]+)\s*g\b\s*$/i);
+  const kgMatch = rawLine.match(/\b([\d.]+)\s*kg\b\s*$/i);
+  const quantityMatch = rawLine.match(/\sx\s*([\d.]+)?\s*$/i);
+  const fullMatch = /\bfull\b/i.test(rawLine);
+
+  if (kgMatch) {
+    const kgValue = Number(kgMatch[1]);
+
+    return {
+      quantity: Number.isFinite(kgValue) ? kgValue * 1000 : 1000,
+      unit: "g",
+      statusNote: `Imported as ${kgValue}kg and converted to grams.`,
+      cleanedLine: rawLine.replace(/\b[\d.]+\s*kg\b\s*$/i, "").trim(),
+    };
+  }
+
+  if (gramMatch) {
+    const gramValue = Number(gramMatch[1]);
+
+    return {
+      quantity: Number.isFinite(gramValue) ? gramValue : 0,
+      unit: "g",
+      statusNote: `Imported as ${gramValue}g remaining.`,
+      cleanedLine: rawLine.replace(/\b[\d.]+\s*g\b\s*$/i, "").trim(),
+    };
+  }
 
   if (quantityMatch) {
     const rawValue = quantityMatch[1];
@@ -252,16 +219,16 @@ function parseQuantity(line) {
       statusNote: rawValue
         ? ""
         : "Quantity marker x was present with no number, defaulted to 1.",
-      cleanedLine: line.replace(/\sx\s*([\d.]+)?\s*$/i, "").trim(),
+      cleanedLine: rawLine.replace(/\sx\s*([\d.]+)?\s*$/i, "").trim(),
     };
   }
 
   if (fullMatch) {
     return {
-      quantity: 1,
-      unit: "rolls",
-      statusNote: "Marked as full roll.",
-      cleanedLine: line.replace(/\bfull\b/gi, "").trim(),
+      quantity: 1000,
+      unit: "g",
+      statusNote: "Marked as full filament roll and imported as 1000g.",
+      cleanedLine: rawLine.replace(/\bfull\b/gi, "").trim(),
     };
   }
 
@@ -269,7 +236,7 @@ function parseQuantity(line) {
     quantity: 1,
     unit: "rolls",
     statusNote: "No quantity provided. Defaulted to 1 roll/item for now.",
-    cleanedLine: line.trim(),
+    cleanedLine: rawLine,
   };
 }
 
@@ -294,9 +261,7 @@ function inferFallbackInventoryItem(rawLine) {
   let reorderThreshold = 0;
   let notes = quantityInfo.statusNote;
 
-  if (sku) {
-    brand = "Bambu Lab";
-  }
+  if (sku) brand = "Bambu Lab";
 
   if (lower.includes("stainless steel")) {
     category = "Engraving Blank";
@@ -407,11 +372,6 @@ function inferFallbackInventoryItem(rawLine) {
 
     unit = "rolls";
     brand = "Bambu Lab";
-  } else {
-    category = "Filament";
-    material = "PLA Basic";
-    color = nameWithoutSku;
-    unit = "rolls";
   }
 
   const displayName =
@@ -489,6 +449,42 @@ function swatchStyle(hexCode) {
   };
 }
 
+function groupCatalogItems(catalogItems, inventoryItems) {
+  const groups = new Map();
+
+  catalogItems.forEach((item) => {
+    const groupKey = item.materialType || item.category || "Other";
+
+    if (!groups.has(groupKey)) {
+      groups.set(groupKey, {
+        id: groupKey,
+        materialType: groupKey,
+        category: item.category || "Other",
+        items: [],
+        ownedCount: 0,
+        ownedQuantity: 0,
+        totalCount: 0,
+      });
+    }
+
+    const group = groups.get(groupKey);
+    const ownedQuantity = getOwnedQuantityForCatalog(inventoryItems, item);
+
+    group.items.push(item);
+    group.totalCount += 1;
+    group.ownedQuantity += ownedQuantity;
+
+    if (ownedQuantity > 0) group.ownedCount += 1;
+  });
+
+  return [...groups.values()].sort((a, b) => {
+    return (
+      String(a.category || "").localeCompare(String(b.category || "")) ||
+      String(a.materialType || "").localeCompare(String(b.materialType || ""))
+    );
+  });
+}
+
 function Field({
   label,
   value,
@@ -525,6 +521,8 @@ export default function InventoryPage({
 
   const [catalogSearch, setCatalogSearch] = useState("");
   const [catalogCategoryFilter, setCatalogCategoryFilter] = useState("All");
+  const [expandedCatalogGroups, setExpandedCatalogGroups] = useState({});
+  const [selectedCatalogColors, setSelectedCatalogColors] = useState({});
   const [priceMode, setPriceMode] = useState(
     localStorage.getItem("overkill_material_price_mode") || "msrp"
   );
@@ -535,12 +533,9 @@ export default function InventoryPage({
   const [bulkText, setBulkText] = useState(RAW_STARTER_INVENTORY);
 
   const [itemDraft, setItemDraft] = useState(EMPTY_ITEM);
-
   const [editingItemId, setEditingItemId] = useState("");
   const [editingDraft, setEditingDraft] = useState(null);
-
-  const [adjustmentDraft, setAdjustmentDraft] =
-    useState(EMPTY_ADJUSTMENT);
+  const [adjustmentDraft, setAdjustmentDraft] = useState(EMPTY_ADJUSTMENT);
 
   const catalogCategories = useMemo(() => {
     return getMaterialCatalogCategories();
@@ -551,21 +546,17 @@ export default function InventoryPage({
   }, [bulkText, priceMode]);
 
   const filteredCatalogItems = useMemo(() => {
-    return searchMaterialCatalog(
-      catalogSearch,
-      catalogCategoryFilter
-    ).slice(0, 200);
+    return searchMaterialCatalog(catalogSearch, catalogCategoryFilter);
   }, [catalogSearch, catalogCategoryFilter]);
+
+  const groupedCatalogItems = useMemo(() => {
+    return groupCatalogItems(filteredCatalogItems, inventoryItems);
+  }, [filteredCatalogItems, inventoryItems]);
 
   const filteredItems = useMemo(() => {
     return inventoryItems
       .filter((item) =>
-        matchesItem(
-          item,
-          searchTerm,
-          categoryFilter,
-          stockFilter
-        )
+        matchesItem(item, searchTerm, categoryFilter, stockFilter)
       )
       .sort((a, b) => {
         if (isLowStock(a) !== isLowStock(b)) {
@@ -573,30 +564,20 @@ export default function InventoryPage({
         }
 
         return (
-          String(a.category || "").localeCompare(
-            String(b.category || "")
-          ) ||
-          String(a.name || "").localeCompare(
-            String(b.name || "")
-          )
+          String(a.category || "").localeCompare(String(b.category || "")) ||
+          String(a.material || "").localeCompare(String(b.material || "")) ||
+          String(a.color || "").localeCompare(String(b.color || "")) ||
+          String(a.name || "").localeCompare(String(b.name || ""))
         );
       });
-  }, [
-    inventoryItems,
-    searchTerm,
-    categoryFilter,
-    stockFilter,
-  ]);
+  }, [inventoryItems, searchTerm, categoryFilter, stockFilter]);
 
   const filteredLogs = useMemo(() => {
     return inventoryLogs
-      .filter((log) =>
-        matchesLog(log, logSearchTerm)
-      )
+      .filter((log) => matchesLog(log, logSearchTerm))
       .sort(
         (a, b) =>
-          new Date(b.createdAt || 0) -
-          new Date(a.createdAt || 0)
+          new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
       )
       .slice(0, 100);
   }, [inventoryLogs, logSearchTerm]);
@@ -662,6 +643,43 @@ export default function InventoryPage({
     }));
   }
 
+  function toggleCatalogGroup(groupId) {
+    setExpandedCatalogGroups((current) => ({
+      ...current,
+      [groupId]: !current[groupId],
+    }));
+  }
+
+  function getSelectedCatalogItem(group) {
+    const selectedId = selectedCatalogColors[group.id];
+    return (
+      group.items.find((item) => item.id === selectedId) ||
+      group.items[0] ||
+      null
+    );
+  }
+
+  function updateSelectedCatalogColor(groupId, catalogItemId) {
+    setSelectedCatalogColors((current) => ({
+      ...current,
+      [groupId]: catalogItemId,
+    }));
+  }
+
+  function expandAllCatalogGroups() {
+    const nextExpanded = {};
+
+    groupedCatalogItems.forEach((group) => {
+      nextExpanded[group.id] = true;
+    });
+
+    setExpandedCatalogGroups(nextExpanded);
+  }
+
+  function collapseAllCatalogGroups() {
+    setExpandedCatalogGroups({});
+  }
+
   function saveNewItem() {
     if (!itemDraft.name.trim()) {
       window.alert("Inventory item name is required.");
@@ -669,7 +687,6 @@ export default function InventoryPage({
     }
 
     onAddItem(itemDraft);
-
     setItemDraft(EMPTY_ITEM);
     setShowAddItem(false);
   }
@@ -767,7 +784,6 @@ export default function InventoryPage({
     }
 
     onUpdateItem(itemId, editingDraft);
-
     cancelEditing();
   }
 
@@ -779,28 +795,18 @@ export default function InventoryPage({
 
     if (
       adjustmentDraft.quantityChange === "" ||
-      Number.isNaN(
-        Number(adjustmentDraft.quantityChange)
-      )
+      Number.isNaN(Number(adjustmentDraft.quantityChange))
     ) {
-      window.alert(
-        "Enter a valid quantity change."
-      );
+      window.alert("Enter a valid quantity change.");
       return;
     }
 
-    onAdjustItem(
-      adjustmentDraft.itemId,
-      adjustmentDraft
-    );
-
+    onAdjustItem(adjustmentDraft.itemId, adjustmentDraft);
     setAdjustmentDraft(EMPTY_ADJUSTMENT);
   }
 
   function quickUseItem(item) {
-    const quantity = window.prompt(
-      `How many ${item.unit} were used?`
-    );
+    const quantity = window.prompt(`How many ${item.unit} were used?`);
 
     if (
       quantity === null ||
@@ -810,13 +816,8 @@ export default function InventoryPage({
       return;
     }
 
-    const jobNumber = window.prompt(
-      "Related job number? (Optional)"
-    );
-
-    const notes = window.prompt(
-      "Usage notes? (Optional)"
-    );
+    const jobNumber = window.prompt("Related job number? (Optional)");
+    const notes = window.prompt("Usage notes? (Optional)");
 
     onAdjustItem(item.id, {
       type: "Stock Used",
@@ -878,10 +879,7 @@ export default function InventoryPage({
       ...rows.map((row) =>
         row
           .map((value) =>
-            `"${String(value ?? "").replaceAll(
-              `"`,
-              `""`
-            )}"`
+            `"${String(value ?? "").replaceAll(`"`, `""`)}"`
           )
           .join(",")
       ),
@@ -892,7 +890,6 @@ export default function InventoryPage({
     });
 
     const url = URL.createObjectURL(blob);
-
     const link = document.createElement("a");
 
     link.href = url;
@@ -901,9 +898,7 @@ export default function InventoryPage({
     }.csv`;
 
     document.body.appendChild(link);
-
     link.click();
-
     document.body.removeChild(link);
 
     URL.revokeObjectURL(url);
@@ -927,9 +922,7 @@ export default function InventoryPage({
           <Field
             label="Item Name"
             value={draft.name}
-            onChange={(value) =>
-              updateFn("name", value)
-            }
+            onChange={(value) => updateFn("name", value)}
           />
 
           <label className="field">
@@ -937,18 +930,10 @@ export default function InventoryPage({
 
             <select
               value={draft.category}
-              onChange={(event) =>
-                updateFn(
-                  "category",
-                  event.target.value
-                )
-              }
+              onChange={(event) => updateFn("category", event.target.value)}
             >
               {CATEGORIES.map((category) => (
-                <option
-                  key={category}
-                  value={category}
-                >
+                <option key={category} value={category}>
                   {category}
                 </option>
               ))}
@@ -958,33 +943,25 @@ export default function InventoryPage({
           <Field
             label="Material"
             value={draft.material}
-            onChange={(value) =>
-              updateFn("material", value)
-            }
+            onChange={(value) => updateFn("material", value)}
           />
 
           <Field
             label="Color / Finish"
             value={draft.color}
-            onChange={(value) =>
-              updateFn("color", value)
-            }
+            onChange={(value) => updateFn("color", value)}
           />
 
           <Field
             label="Brand"
             value={draft.brand}
-            onChange={(value) =>
-              updateFn("brand", value)
-            }
+            onChange={(value) => updateFn("brand", value)}
           />
 
           <Field
             label="Location"
             value={draft.location}
-            onChange={(value) =>
-              updateFn("location", value)
-            }
+            onChange={(value) => updateFn("location", value)}
           />
 
           <label className="field">
@@ -992,12 +969,7 @@ export default function InventoryPage({
 
             <select
               value={draft.unit}
-              onChange={(event) =>
-                updateFn(
-                  "unit",
-                  event.target.value
-                )
-              }
+              onChange={(event) => updateFn("unit", event.target.value)}
             >
               {UNITS.map((unit) => (
                 <option key={unit} value={unit}>
@@ -1011,103 +983,72 @@ export default function InventoryPage({
             label="Quantity On Hand"
             type="number"
             value={draft.quantityOnHand}
-            onChange={(value) =>
-              updateFn(
-                "quantityOnHand",
-                value
-              )
-            }
+            onChange={(value) => updateFn("quantityOnHand", value)}
           />
 
           <Field
             label="Reorder Threshold"
             type="number"
             value={draft.reorderThreshold}
-            onChange={(value) =>
-              updateFn(
-                "reorderThreshold",
-                value
-              )
-            }
+            onChange={(value) => updateFn("reorderThreshold", value)}
           />
 
           <Field
             label="Unit Cost"
             type="number"
             value={draft.unitCost}
-            onChange={(value) =>
-              updateFn("unitCost", value)
-            }
+            onChange={(value) => updateFn("unitCost", value)}
           />
 
           <Field
             label="Vendor"
             value={draft.vendor}
-            onChange={(value) =>
-              updateFn("vendor", value)
-            }
+            onChange={(value) => updateFn("vendor", value)}
           />
 
           <Field
             label="SKU / Part Number"
             value={draft.sku}
-            onChange={(value) =>
-              updateFn("sku", value)
-            }
+            onChange={(value) => updateFn("sku", value)}
           />
 
           <Field
             label="Bambu Code"
             value={draft.bambuCode || ""}
-            onChange={(value) =>
-              updateFn("bambuCode", value)
-            }
+            onChange={(value) => updateFn("bambuCode", value)}
           />
 
           <Field
             label="Hex Code"
             value={draft.hexCode || ""}
-            onChange={(value) =>
-              updateFn("hexCode", value)
-            }
+            onChange={(value) => updateFn("hexCode", value)}
           />
 
           <Field
             label="Catalog ID"
             value={draft.catalogId || ""}
-            onChange={(value) =>
-              updateFn("catalogId", value)
-            }
+            onChange={(value) => updateFn("catalogId", value)}
           />
 
           <Field
             label="MSRP"
             type="number"
             value={draft.msrp || 0}
-            onChange={(value) =>
-              updateFn("msrp", value)
-            }
+            onChange={(value) => updateFn("msrp", value)}
           />
 
           <Field
             label="Bulk Price"
             type="number"
             value={draft.bulkPrice || 0}
-            onChange={(value) =>
-              updateFn("bulkPrice", value)
-            }
+            onChange={(value) => updateFn("bulkPrice", value)}
           />
 
           <label className="field checkbox-field">
             <input
               type="checkbox"
               checked={draft.active !== false}
-              onChange={(event) =>
-                updateFn(
-                  "active",
-                  event.target.checked
-                )
-              }
+              onChange={(event) => updateFn("active", event.target.checked)}
             />
 
             <span>Active Item</span>
@@ -1119,15 +1060,146 @@ export default function InventoryPage({
 
           <textarea
             value={draft.notes}
-            onChange={(event) =>
-              updateFn(
-                "notes",
-                event.target.value
-              )
-            }
+            onChange={(event) => updateFn("notes", event.target.value)}
           />
         </label>
       </>
+    );
+  }
+
+  function renderCatalogGroup(group) {
+    const isExpanded = Boolean(expandedCatalogGroups[group.id]);
+    const selectedItem = getSelectedCatalogItem(group);
+    const price = selectedItem ? getMaterialPrice(selectedItem, priceMode) : 0;
+    const selectedOwnedQuantity = selectedItem
+      ? getOwnedQuantityForCatalog(inventoryItems, selectedItem)
+      : 0;
+
+    return (
+      <div className="catalog-group-card" key={group.id}>
+        <div className="dashboard-list-row catalog-group-header">
+          <button
+            className="icon-button"
+            type="button"
+            onClick={() => toggleCatalogGroup(group.id)}
+            title={isExpanded ? "Collapse" : "Expand"}
+          >
+            {isExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+          </button>
+
+          <div className="catalog-group-main">
+            <strong>
+              {selectedItem && renderColorSwatch(selectedItem.hexCode)}
+              {group.materialType}
+            </strong>
+
+            <span>
+              {group.category} • {group.totalCount} color/item option
+              {group.totalCount === 1 ? "" : "s"} • {group.ownedCount} owned
+            </span>
+
+            {selectedItem && (
+              <small>
+                Selected: {selectedItem.colorName || selectedItem.displayName}{" "}
+                {selectedItem.bambuCode ? `(${selectedItem.bambuCode})` : ""} •{" "}
+                {money(price)} • Owned: {selectedOwnedQuantity}{" "}
+                {selectedItem.unit || "units"}
+              </small>
+            )}
+          </div>
+
+          <div className="catalog-group-actions">
+            {selectedItem && (
+              <select
+                className="compact-select"
+                value={selectedItem.id}
+                onChange={(event) =>
+                  updateSelectedCatalogColor(group.id, event.target.value)
+                }
+              >
+                {group.items.map((item) => {
+                  const ownedQuantity = getOwnedQuantityForCatalog(
+                    inventoryItems,
+                    item
+                  );
+
+                  return (
+                    <option key={item.id} value={item.id}>
+                      {item.colorName || item.displayName}
+                      {item.bambuCode ? ` (${item.bambuCode})` : ""}
+                      {ownedQuantity > 0 ? ` — owned ${ownedQuantity}` : ""}
+                    </option>
+                  );
+                })}
+              </select>
+            )}
+
+            {selectedItem && (
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => addCatalogItemToInventory(selectedItem)}
+              >
+                <Plus size={14} />
+                Add Selected
+              </button>
+            )}
+          </div>
+        </div>
+
+        {isExpanded && (
+          <div className="catalog-color-list">
+            {group.items.map((catalogItem) => {
+              const ownedQuantity = getOwnedQuantityForCatalog(
+                inventoryItems,
+                catalogItem
+              );
+
+              const itemPrice = getMaterialPrice(catalogItem, priceMode);
+
+              return (
+                <div className="dashboard-list-row" key={catalogItem.id}>
+                  <div>
+                    <strong>
+                      {renderColorSwatch(catalogItem.hexCode)}
+                      {catalogItem.colorName || catalogItem.displayName}
+                      {catalogItem.bambuCode ? ` (${catalogItem.bambuCode})` : ""}
+                    </strong>
+
+                    <span>
+                      {catalogItem.category} • {catalogItem.materialType} •{" "}
+                      {catalogItem.hexCode || "No hex"} • {money(itemPrice)}
+                    </span>
+
+                    <small>
+                      Owned: {ownedQuantity} {catalogItem.unit || "units"} • MSRP{" "}
+                      {money(catalogItem.msrp)} • Bulk{" "}
+                      {money(catalogItem.bulkPrice)}
+                    </small>
+                  </div>
+
+                  <div className="dashboard-status-stack">
+                    {ownedQuantity > 0 ? (
+                      <span className="status-pill">Owned</span>
+                    ) : (
+                      <span className="status-pill">Can Get</span>
+                    )}
+
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      onClick={() => addCatalogItemToInventory(catalogItem)}
+                    >
+                      <Plus size={14} />
+                      Add
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     );
   }
 
@@ -1135,13 +1207,11 @@ export default function InventoryPage({
     <section className="page-panel">
       <div className="page-heading-row">
         <div>
-          <h2 className="section-title brand-font">
-            Inventory
-          </h2>
+          <h2 className="section-title brand-font">Inventory</h2>
 
           <p className="muted-text">
-            Track owned stock separately from the material catalog. Catalog is what
-            you can get; inventory is what you actually have.
+            Track owned stock separately from the material catalog. Catalog is
+            what you can get; inventory is what you actually have.
           </p>
         </div>
 
@@ -1158,49 +1228,40 @@ export default function InventoryPage({
           <button
             className="secondary-button"
             type="button"
-            onClick={() =>
-              setShowCatalog(!showCatalog)
-            }
+            onClick={() => setShowCatalog(!showCatalog)}
           >
             <Eye size={18} />
-            {showCatalog
-              ? "Hide Catalog"
-              : "Show Catalog"}
+            {showCatalog ? "Hide Catalog" : "Show Catalog"}
           </button>
 
           <button
             className="secondary-button"
             type="button"
-            onClick={() =>
-              setShowBulkImport(!showBulkImport)
-            }
+            onClick={() => setShowBulkImport(!showBulkImport)}
           >
             <Upload size={18} />
-            {showBulkImport
-              ? "Hide Bulk Import"
-              : "Bulk Import"}
+            {showBulkImport ? "Hide Bulk Import" : "Bulk Import"}
           </button>
 
           <button
             className="primary-button customer-new-button"
             type="button"
-            onClick={() =>
-              setShowAddItem(!showAddItem)
-            }
+            onClick={() => setShowAddItem(!showAddItem)}
           >
             <PackagePlus size={18} />
-
-            {showAddItem
-              ? "Hide New Item"
-              : "New Inventory Item"}
+            {showAddItem ? "Hide New Item" : "New Inventory Item"}
           </button>
         </div>
       </div>
-
-      <div className="job-queue-summary">
+            <div className="job-queue-summary">
         <div>
           <span>Owned Items</span>
           <strong>{stats.totalItems}</strong>
+        </div>
+
+        <div>
+          <span>Catalog Groups</span>
+          <strong>{groupedCatalogItems.length}</strong>
         </div>
 
         <div>
@@ -1230,9 +1291,7 @@ export default function InventoryPage({
 
         <div>
           <span>Inventory Value</span>
-          <strong>
-            {money(stats.totalValue)}
-          </strong>
+          <strong>{money(stats.totalValue)}</strong>
         </div>
 
         <div>
@@ -1242,18 +1301,14 @@ export default function InventoryPage({
 
         <div>
           <span>Logs</span>
-          <strong>
-            {inventoryLogs.length}
-          </strong>
+          <strong>{inventoryLogs.length}</strong>
         </div>
       </div>
 
       <div className="form-card">
         <div className="page-heading-row">
           <div>
-            <h3 className="card-title">
-              Material Pricing Mode
-            </h3>
+            <h3 className="card-title">Material Pricing Mode</h3>
 
             <p className="muted-text">
               Used when adding catalog materials to inventory or bulk importing
@@ -1266,9 +1321,7 @@ export default function InventoryPage({
 
             <select
               value={priceMode}
-              onChange={(event) =>
-                updatePriceMode(event.target.value)
-              }
+              onChange={(event) => updatePriceMode(event.target.value)}
             >
               {MATERIAL_PRICE_MODES.map((mode) => (
                 <option key={mode.id} value={mode.id}>
@@ -1284,14 +1337,32 @@ export default function InventoryPage({
         <div className="form-card">
           <div className="page-heading-row">
             <div>
-              <h3 className="card-title">
-                Material Catalog — Can Get
-              </h3>
+              <h3 className="card-title">Material Catalog — Can Get</h3>
 
               <p className="muted-text">
-                Search Bambu filament, engraving blanks, cutting materials,
-                vinyl, acrylic, wood, leatherette, paper, and cork.
+                Collapsed by material type. Use the color dropdown on each group
+                to quickly add specific colors/items to owned inventory.
               </p>
+            </div>
+
+            <div className="record-button-row">
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={expandAllCatalogGroups}
+              >
+                <ChevronDown size={18} />
+                Expand All
+              </button>
+
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={collapseAllCatalogGroups}
+              >
+                <ChevronRight size={18} />
+                Collapse All
+              </button>
             </div>
           </div>
 
@@ -1303,9 +1374,7 @@ export default function InventoryPage({
                 type="search"
                 value={catalogSearch}
                 placeholder="Search catalog by material, color, code, hex, category..."
-                onChange={(event) =>
-                  setCatalogSearch(event.target.value)
-                }
+                onChange={(event) => setCatalogSearch(event.target.value)}
               />
             </label>
 
@@ -1315,20 +1384,13 @@ export default function InventoryPage({
               <select
                 value={catalogCategoryFilter}
                 onChange={(event) =>
-                  setCatalogCategoryFilter(
-                    event.target.value
-                  )
+                  setCatalogCategoryFilter(event.target.value)
                 }
               >
-                <option value="All">
-                  All Categories
-                </option>
+                <option value="All">All Categories</option>
 
                 {catalogCategories.map((category) => (
-                  <option
-                    key={category}
-                    value={category}
-                  >
+                  <option key={category} value={category}>
                     {category}
                   </option>
                 ))}
@@ -1336,90 +1398,24 @@ export default function InventoryPage({
             </label>
 
             <div className="filter-count-pill">
-              Showing {filteredCatalogItems.length} of{" "}
-              {MATERIAL_CATALOG.length}
+              Showing {groupedCatalogItems.length} group
+              {groupedCatalogItems.length === 1 ? "" : "s"} /{" "}
+              {filteredCatalogItems.length} item
+              {filteredCatalogItems.length === 1 ? "" : "s"}
             </div>
           </div>
 
           <div className="dashboard-list single-row-gap">
-            {filteredCatalogItems.map((catalogItem) => {
-              const ownedQuantity =
-                getOwnedQuantityForCatalog(
-                  inventoryItems,
-                  catalogItem
-                );
-
-              const price = getMaterialPrice(
-                catalogItem,
-                priceMode
-              );
-
-              return (
-                <div
-                  className="dashboard-list-row"
-                  key={catalogItem.id}
-                >
-                  <div>
-                    <strong>
-                      {renderColorSwatch(
-                        catalogItem.hexCode
-                      )}
-
-                      {getMaterialDisplayLabel(
-                        catalogItem
-                      )}
-                    </strong>
-
-                    <span>
-                      {catalogItem.category} •{" "}
-                      {catalogItem.materialType} •{" "}
-                      {catalogItem.hexCode || "No hex"} •{" "}
-                      {money(price)}
-                    </span>
-
-                    <small>
-                      Owned: {ownedQuantity}{" "}
-                      {catalogItem.unit || "units"} • MSRP{" "}
-                      {money(catalogItem.msrp)} • Bulk{" "}
-                      {money(catalogItem.bulkPrice)}
-                    </small>
-                  </div>
-
-                  <div className="dashboard-status-stack">
-                    {ownedQuantity > 0 ? (
-                      <span className="status-pill">
-                        Owned
-                      </span>
-                    ) : (
-                      <span className="status-pill">
-                        Can Get
-                      </span>
-                    )}
-
-                    <button
-                      className="secondary-button"
-                      type="button"
-                      onClick={() =>
-                        addCatalogItemToInventory(catalogItem)
-                      }
-                    >
-                      <Plus size={14} />
-                      Add to Inventory
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
+            {groupedCatalogItems.map((group) => renderCatalogGroup(group))}
           </div>
         </div>
       )}
-            {showBulkImport && (
+
+      {showBulkImport && (
         <div className="form-card customer-create-card">
           <div className="page-heading-row">
             <div>
-              <h3 className="card-title">
-                Bulk Import Starter Inventory
-              </h3>
+              <h3 className="card-title">Bulk Import Starter Inventory</h3>
 
               <p className="muted-text">
                 Paste raw inventory lines here. Codes like (10501) auto-match
@@ -1442,29 +1438,20 @@ export default function InventoryPage({
 
             <textarea
               value={bulkText}
-              onChange={(event) =>
-                setBulkText(event.target.value)
-              }
+              onChange={(event) => setBulkText(event.target.value)}
               rows={14}
             />
           </label>
 
           <div className="form-card single-row-gap">
-            <h3 className="card-title">
-              Import Preview
-            </h3>
+            <h3 className="card-title">Import Preview</h3>
 
             {parsedBulkItems.length === 0 ? (
-              <p className="muted-text">
-                No parsed items yet.
-              </p>
+              <p className="muted-text">No parsed items yet.</p>
             ) : (
               <div className="dashboard-list">
                 {parsedBulkItems.slice(0, 30).map((item) => (
-                  <div
-                    className="dashboard-list-row"
-                    key={item.id}
-                  >
+                  <div className="dashboard-list-row" key={item.id}>
                     <div>
                       <strong>
                         {renderColorSwatch(item.hexCode)}
@@ -1473,25 +1460,18 @@ export default function InventoryPage({
 
                       <span>
                         {item.category}
-                        {item.material
-                          ? ` • ${item.material}`
-                          : ""}
-                        {item.color
-                          ? ` • ${item.color}`
-                          : ""}
+                        {item.material ? ` • ${item.material}` : ""}
+                        {item.color ? ` • ${item.color}` : ""}
                         {item.bambuCode || item.sku
                           ? ` • ${item.bambuCode || item.sku}`
                           : ""}
                       </span>
 
-                      {item.notes && (
-                        <small>{item.notes}</small>
-                      )}
+                      {item.notes && <small>{item.notes}</small>}
                     </div>
 
                     <span className="status-pill">
-                      {item.quantityOnHand} {item.unit} •{" "}
-                      {money(item.unitCost)}
+                      {item.quantityOnHand} {item.unit} • {money(item.unitCost)}
                     </span>
                   </div>
                 ))}
@@ -1506,14 +1486,11 @@ export default function InventoryPage({
           </div>
         </div>
       )}
-
-      {showAddItem && (
+            {showAddItem && (
         <div className="form-card customer-create-card">
           <div className="page-heading-row">
             <div>
-              <h3 className="card-title">
-                Create Inventory Item
-              </h3>
+              <h3 className="card-title">Create Inventory Item</h3>
             </div>
 
             <div className="record-button-row">
@@ -1540,10 +1517,7 @@ export default function InventoryPage({
             </div>
           </div>
 
-          {renderItemForm(
-            itemDraft,
-            updateItemDraft
-          )}
+          {renderItemForm(itemDraft, updateItemDraft)}
         </div>
       )}
 
@@ -1555,11 +1529,7 @@ export default function InventoryPage({
             type="search"
             value={searchTerm}
             placeholder="Search owned inventory..."
-            onChange={(event) =>
-              setSearchTerm(
-                event.target.value
-              )
-            }
+            onChange={(event) => setSearchTerm(event.target.value)}
           />
         </label>
 
@@ -1568,21 +1538,12 @@ export default function InventoryPage({
 
           <select
             value={categoryFilter}
-            onChange={(event) =>
-              setCategoryFilter(
-                event.target.value
-              )
-            }
+            onChange={(event) => setCategoryFilter(event.target.value)}
           >
-            <option value="All">
-              All Categories
-            </option>
+            <option value="All">All Categories</option>
 
             {CATEGORIES.map((category) => (
-              <option
-                key={category}
-                value={category}
-              >
+              <option key={category} value={category}>
                 {category}
               </option>
             ))}
@@ -1594,48 +1555,24 @@ export default function InventoryPage({
 
           <select
             value={stockFilter}
-            onChange={(event) =>
-              setStockFilter(
-                event.target.value
-              )
-            }
+            onChange={(event) => setStockFilter(event.target.value)}
           >
-            <option value="All">
-              All Stock
-            </option>
-
-            <option value="Active">
-              Active
-            </option>
-
-            <option value="Inactive">
-              Inactive
-            </option>
-
-            <option value="Low Stock">
-              Low Stock
-            </option>
-
-            <option value="In Stock">
-              In Stock
-            </option>
-
-            <option value="Out of Stock">
-              Out of Stock
-            </option>
+            <option value="All">All Stock</option>
+            <option value="Active">Active</option>
+            <option value="Inactive">Inactive</option>
+            <option value="Low Stock">Low Stock</option>
+            <option value="In Stock">In Stock</option>
+            <option value="Out of Stock">Out of Stock</option>
           </select>
         </label>
 
         <div className="filter-count-pill">
-          Showing {filteredItems.length} of{" "}
-          {inventoryItems.length}
+          Showing {filteredItems.length} of {inventoryItems.length}
         </div>
       </div>
 
       <div className="form-card">
-        <h3 className="card-title">
-          Inventory Adjustment / Usage
-        </h3>
+        <h3 className="card-title">Inventory Adjustment / Usage</h3>
 
         <div className="form-grid">
           <label className="field">
@@ -1644,24 +1581,14 @@ export default function InventoryPage({
             <select
               value={adjustmentDraft.itemId}
               onChange={(event) =>
-                updateAdjustmentDraft(
-                  "itemId",
-                  event.target.value
-                )
+                updateAdjustmentDraft("itemId", event.target.value)
               }
             >
-              <option value="">
-                Select item...
-              </option>
+              <option value="">Select item...</option>
 
               {inventoryItems.map((item) => (
-                <option
-                  key={item.id}
-                  value={item.id}
-                >
-                  {item.name} —{" "}
-                  {item.quantityOnHand}{" "}
-                  {item.unit}
+                <option key={item.id} value={item.id}>
+                  {item.name} — {item.quantityOnHand} {item.unit}
                 </option>
               ))}
             </select>
@@ -1673,36 +1600,23 @@ export default function InventoryPage({
             <select
               value={adjustmentDraft.type}
               onChange={(event) =>
-                updateAdjustmentDraft(
-                  "type",
-                  event.target.value
-                )
+                updateAdjustmentDraft("type", event.target.value)
               }
             >
-              {ADJUSTMENT_TYPES.map(
-                (type) => (
-                  <option
-                    key={type}
-                    value={type}
-                  >
-                    {type}
-                  </option>
-                )
-              )}
+              {ADJUSTMENT_TYPES.map((type) => (
+                <option key={type} value={type}>
+                  {type}
+                </option>
+              ))}
             </select>
           </label>
 
           <Field
             label="Quantity Change"
             type="number"
-            value={
-              adjustmentDraft.quantityChange
-            }
+            value={adjustmentDraft.quantityChange}
             onChange={(value) =>
-              updateAdjustmentDraft(
-                "quantityChange",
-                value
-              )
+              updateAdjustmentDraft("quantityChange", value)
             }
           />
 
@@ -1712,23 +1626,14 @@ export default function InventoryPage({
             <select
               value={adjustmentDraft.jobNumber}
               onChange={(event) =>
-                updateAdjustmentDraft(
-                  "jobNumber",
-                  event.target.value
-                )
+                updateAdjustmentDraft("jobNumber", event.target.value)
               }
             >
-              <option value="">
-                No Job
-              </option>
+              <option value="">No Job</option>
 
               {jobs.map((job) => (
-                <option
-                  key={job.id}
-                  value={job.jobNumber}
-                >
-                  {job.jobNumber} —{" "}
-                  {job.customerName}
+                <option key={job.id} value={job.jobNumber}>
+                  {job.jobNumber} — {job.customerName}
                 </option>
               ))}
             </select>
@@ -1741,10 +1646,7 @@ export default function InventoryPage({
           <textarea
             value={adjustmentDraft.notes}
             onChange={(event) =>
-              updateAdjustmentDraft(
-                "notes",
-                event.target.value
-              )
+              updateAdjustmentDraft("notes", event.target.value)
             }
           />
         </label>
@@ -1761,35 +1663,26 @@ export default function InventoryPage({
 
       <div className="inventory-grid single-row-gap">
         {filteredItems.map((item) => {
-          const lowStock =
-            isLowStock(item);
-
-          const isEditing =
-            editingItemId === item.id;
+          const lowStock = isLowStock(item);
+          const isEditing = editingItemId === item.id;
 
           return (
             <article
               key={item.id}
               className={`inventory-card ${
-                lowStock
-                  ? "inventory-low-stock"
-                  : ""
+                lowStock ? "inventory-low-stock" : ""
               }`}
             >
               {isEditing ? (
                 <>
                   <div className="page-heading-row">
-                    <h3 className="card-title">
-                      Edit Item
-                    </h3>
+                    <h3 className="card-title">Edit Item</h3>
 
                     <div className="record-button-row">
                       <button
                         className="secondary-button"
                         type="button"
-                        onClick={
-                          cancelEditing
-                        }
+                        onClick={cancelEditing}
                       >
                         <XCircle size={18} />
                         Cancel
@@ -1798,11 +1691,7 @@ export default function InventoryPage({
                       <button
                         className="primary-button"
                         type="button"
-                        onClick={() =>
-                          saveEditing(
-                            item.id
-                          )
-                        }
+                        onClick={() => saveEditing(item.id)}
                       >
                         <Save size={18} />
                         Save
@@ -1810,10 +1699,7 @@ export default function InventoryPage({
                     </div>
                   </div>
 
-                  {renderItemForm(
-                    editingDraft || item,
-                    updateEditingDraft
-                  )}
+                  {renderItemForm(editingDraft || item, updateEditingDraft)}
                 </>
               ) : (
                 <>
@@ -1826,12 +1712,8 @@ export default function InventoryPage({
 
                       <p>
                         {item.category}
-                        {item.material
-                          ? ` • ${item.material}`
-                          : ""}
-                        {item.color
-                          ? ` • ${item.color}`
-                          : ""}
+                        {item.material ? ` • ${item.material}` : ""}
+                        {item.color ? ` • ${item.color}` : ""}
                         {item.bambuCode || item.sku
                           ? ` • ${item.bambuCode || item.sku}`
                           : ""}
@@ -1840,16 +1722,12 @@ export default function InventoryPage({
 
                     <div className="dashboard-status-stack">
                       {item.catalogId && (
-                        <span className="status-pill">
-                          Catalog Linked
-                        </span>
+                        <span className="status-pill">Catalog Linked</span>
                       )}
 
                       {lowStock && (
                         <span className="status-pill">
-                          <AlertTriangle
-                            size={14}
-                          />
+                          <AlertTriangle size={14} />
                           Low Stock
                         </span>
                       )}
@@ -1858,90 +1736,53 @@ export default function InventoryPage({
 
                   <div className="inventory-stock-display">
                     <strong>
-                      {item.quantityOnHand}{" "}
-                      {item.unit}
+                      {item.quantityOnHand} {item.unit}
                     </strong>
 
                     <span>
-                      Reorder at{" "}
-                      {
-                        item.reorderThreshold
-                      }{" "}
-                      {item.unit}
+                      Reorder at {item.reorderThreshold} {item.unit}
                     </span>
                   </div>
 
                   <div className="record-details">
                     <div>
                       <span>Brand</span>
-
-                      <strong>
-                        {item.brand ||
-                          "Not Set"}
-                      </strong>
+                      <strong>{item.brand || "Not Set"}</strong>
                     </div>
 
                     <div>
                       <span>Location</span>
-
-                      <strong>
-                        {item.location ||
-                          "Not Set"}
-                      </strong>
+                      <strong>{item.location || "Not Set"}</strong>
                     </div>
 
                     <div>
                       <span>Unit Cost</span>
-
-                      <strong>
-                        {money(
-                          item.unitCost
-                        )}
-                      </strong>
+                      <strong>{money(item.unitCost)}</strong>
                     </div>
 
                     <div>
                       <span>Stock Value</span>
-
-                      <strong>
-                        {money(
-                          getInventoryValue(
-                            item
-                          )
-                        )}
-                      </strong>
+                      <strong>{money(getInventoryValue(item))}</strong>
                     </div>
 
                     <div>
                       <span>MSRP</span>
-
-                      <strong>
-                        {money(item.msrp || 0)}
-                      </strong>
+                      <strong>{money(item.msrp || 0)}</strong>
                     </div>
 
                     <div>
                       <span>Bulk</span>
-
-                      <strong>
-                        {money(item.bulkPrice || 0)}
-                      </strong>
+                      <strong>{money(item.bulkPrice || 0)}</strong>
                     </div>
                   </div>
 
-                  {item.notes && (
-                    <p className="helper-note">
-                      {item.notes}
-                    </p>
-                  )}
+                  {item.notes && <p className="helper-note">{item.notes}</p>}
 
                   <div className="record-button-row quote-button-row">
                     <button
                       className="secondary-button"
                       type="button"
-                      onClick={() =>
-                        startEditing(item)
-                      }
+                      onClick={() => startEditing(item)}
                     >
                       <Edit size={18} />
                       Edit
@@ -1950,9 +1791,7 @@ export default function InventoryPage({
                     <button
                       className="secondary-button"
                       type="button"
-                      onClick={() =>
-                        quickUseItem(item)
-                      }
+                      onClick={() => quickUseItem(item)}
                     >
                       <Plus size={18} />
                       Quick Use
@@ -1961,11 +1800,7 @@ export default function InventoryPage({
                     <button
                       className="secondary-button danger-button"
                       type="button"
-                      onClick={() =>
-                        onDeleteItem(
-                          item.id
-                        )
-                      }
+                      onClick={() => onDeleteItem(item.id)}
                     >
                       <Trash2 size={18} />
                       Delete
@@ -1977,11 +1812,8 @@ export default function InventoryPage({
           );
         })}
       </div>
-
-      <div className="form-card single-row-gap">
-        <h3 className="card-title">
-          Inventory Logs
-        </h3>
+            <div className="form-card single-row-gap">
+        <h3 className="card-title">Inventory Logs</h3>
 
         <label className="search-field single-row-gap">
           <Search size={18} />
@@ -1990,58 +1822,31 @@ export default function InventoryPage({
             type="search"
             value={logSearchTerm}
             placeholder="Search logs..."
-            onChange={(event) =>
-              setLogSearchTerm(
-                event.target.value
-              )
-            }
+            onChange={(event) => setLogSearchTerm(event.target.value)}
           />
         </label>
 
         <div className="dashboard-list">
           {filteredLogs.map((log) => (
-            <div
-              className="dashboard-list-row"
-              key={log.id}
-            >
+            <div className="dashboard-list-row" key={log.id}>
               <div>
-                <strong>
-                  {log.itemName}
-                </strong>
+                <strong>{log.itemName}</strong>
 
                 <span>
-                  {log.type} •{" "}
-                  {log.quantityChange >
-                  0
-                    ? "+"
-                    : ""}
-                  {log.quantityChange}{" "}
-                  {log.unit} →{" "}
-                  {
-                    log.quantityAfter
-                  }{" "}
+                  {log.type} • {log.quantityChange > 0 ? "+" : ""}
+                  {log.quantityChange} {log.unit} → {log.quantityAfter}{" "}
                   {log.unit}
                 </span>
 
-                {log.notes && (
-                  <small>
-                    {log.notes}
-                  </small>
-                )}
+                {log.notes && <small>{log.notes}</small>}
               </div>
 
               <div className="dashboard-status-stack">
                 {log.jobNumber && (
-                  <span className="status-pill">
-                    {log.jobNumber}
-                  </span>
+                  <span className="status-pill">{log.jobNumber}</span>
                 )}
 
-                <span>
-                  {formatDateTime(
-                    log.createdAt
-                  )}
-                </span>
+                <span>{formatDateTime(log.createdAt)}</span>
               </div>
             </div>
           ))}

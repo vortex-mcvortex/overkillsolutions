@@ -1646,3 +1646,52 @@ textarea:focus {
   vertical-align: -2px;
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18);
 }
+.catalog-group-card {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.catalog-group-header {
+  align-items: center;
+}
+
+.catalog-group-main {
+  flex: 1;
+  min-width: 240px;
+}
+
+.catalog-group-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.catalog-color-list {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-left: 28px;
+}
+
+.compact-select {
+  min-width: 240px;
+  max-width: 340px;
+}
+
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 8px;
+}
+
+.icon-button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
