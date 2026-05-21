@@ -510,7 +510,6 @@ function getNozzle(settings, id) {
   const nozzles = getActiveNozzles(settings);
   return getById(nozzles, id, 0);
 }
-
 function getMaterialPriceMode() {
   return localStorage.getItem("overkill_material_price_mode") || "msrp";
 }
@@ -539,7 +538,9 @@ function getCatalogPrintMaterials() {
       spoolPrice,
       spoolWeightGrams: spoolWeight,
       group:
-        /sparkle|metal|cf|carbon|tpu|asa|abs/i.test(`${item.materialType} ${item.colorName}`)
+        /sparkle|metal|cf|carbon|tpu|asa|abs|paht|nylon|support/i.test(
+          `${item.materialType} ${item.colorName}`
+        )
           ? "specialty"
           : "standard",
       active: item.active !== false,
@@ -549,6 +550,7 @@ function getCatalogPrintMaterials() {
 
 function getAllPrintMaterials(settings) {
   const catalogMaterials = getCatalogPrintMaterials();
+
   const legacyMaterials = getActiveItems(settings.printMaterials).map((item) => ({
     ...item,
     catalogId: item.catalogId || "",
@@ -578,6 +580,81 @@ function swatchStyle(hexCode) {
       hexCode && hexCode.toLowerCase() === "#ffffff"
         ? "1px solid #bbb"
         : undefined,
+  };
+}
+
+function getInventoryMatchesForMaterial(inventoryItems = [], material = {}) {
+  if (!material) return [];
+
+  const materialCatalogId = String(material.catalogId || material.id || "").toLowerCase();
+  const materialCode = String(material.bambuCode || "").toLowerCase();
+  const materialType = String(material.materialType || "").toLowerCase();
+  const colorName = String(material.colorName || "").toLowerCase();
+
+  return inventoryItems.filter((item) => {
+    if (item.active === false) return false;
+
+    const itemCatalogId = String(item.catalogId || "").toLowerCase();
+    const itemCode = String(item.bambuCode || item.sku || "").toLowerCase();
+    const itemMaterial = String(item.material || "").toLowerCase();
+    const itemColor = String(item.color || "").toLowerCase();
+
+    if (materialCatalogId && itemCatalogId && itemCatalogId === materialCatalogId) {
+      return true;
+    }
+
+    if (materialCode && itemCode && itemCode === materialCode) {
+      return true;
+    }
+
+    return (
+      materialType &&
+      colorName &&
+      itemMaterial === materialType &&
+      itemColor === colorName
+    );
+  });
+}
+
+function getStockInfoForMaterial(inventoryItems = [], material = {}, requestedAmount = 0) {
+  const matches = getInventoryMatchesForMaterial(inventoryItems, material);
+
+  const totalOnHand = matches.reduce((sum, item) => {
+    return sum + Number(item.quantityOnHand || 0);
+  }, 0);
+
+  const reorderThreshold = matches.reduce((sum, item) => {
+    return sum + Number(item.reorderThreshold || 0);
+  }, 0);
+
+  const requested = Number(requestedAmount || 0);
+  const remainingAfterJob = totalOnHand - requested;
+
+  let status = "not-owned";
+  let label = "Not in inventory";
+
+  if (matches.length > 0 && totalOnHand <= 0) {
+    status = "out";
+    label = "Out of stock";
+  } else if (matches.length > 0 && remainingAfterJob < 0) {
+    status = "short";
+    label = "Not enough stock";
+  } else if (matches.length > 0 && remainingAfterJob <= reorderThreshold) {
+    status = "low-after";
+    label = "Low after job";
+  } else if (matches.length > 0) {
+    status = "in-stock";
+    label = "In stock";
+  }
+
+  return {
+    matches,
+    totalOnHand,
+    requestedAmount: requested,
+    remainingAfterJob,
+    reorderThreshold,
+    status,
+    label,
   };
 }
 
@@ -615,6 +692,7 @@ function setupReason(material, nozzle) {
 
   return "Standard material with a standard nozzle is the easiest normal setup.";
 }
+
 function curvedBufferPercent(subtotal, settings) {
   if (subtotal <= 50) return num(settings.bufferCurve.under50);
   if (subtotal <= 100) return num(settings.bufferCurve.under100);
@@ -622,7 +700,6 @@ function curvedBufferPercent(subtotal, settings) {
   if (subtotal <= 400) return num(settings.bufferCurve.under400);
   return num(settings.bufferCurve.over400);
 }
-
 function createPrintRun(settings) {
   const activeMaterials = getAllPrintMaterials(settings);
   const activePrinters = getActiveModules(settings, "printer");
@@ -926,6 +1003,47 @@ function renderMaterialSwatch(hexCode) {
   );
 }
 
+function renderStockNotice(stockInfo, requestedUnit = "g") {
+  return (
+    <div className={`customer-warning-box material-stock-box material-stock-${stockInfo.status}`}>
+      <strong>{stockInfo.label}</strong>
+
+      <p>
+        On hand: {stockInfo.totalOnHand}
+        {requestedUnit} • This quote uses: {stockInfo.requestedAmount}
+        {requestedUnit} • After job: {stockInfo.remainingAfterJob}
+        {requestedUnit}
+      </p>
+
+      {stockInfo.status === "not-owned" && (
+        <small>
+          This material exists in the catalog, but no matching owned inventory item was found.
+        </small>
+      )}
+
+      {stockInfo.status === "short" && (
+        <small>
+          You need {Math.abs(stockInfo.remainingAfterJob)}
+          {requestedUnit} more before quoting this as in-stock.
+        </small>
+      )}
+
+      {stockInfo.status === "low-after" && (
+        <small>
+          This job will leave the material at or below reorder threshold.
+        </small>
+      )}
+
+      {stockInfo.status === "in-stock" && (
+        <small>
+          Inventory match found across {stockInfo.matches.length} owned stock entr
+          {stockInfo.matches.length === 1 ? "y" : "ies"}.
+        </small>
+      )}
+    </div>
+  );
+}
+
 export default function CalculatorPage({
   onSaveQuote,
   editingQuote,
@@ -934,6 +1052,7 @@ export default function CalculatorPage({
   jobs = [],
   manualCustomers = [],
   customerOverrides = {},
+  inventoryItems = [],
 }) {
   const [settings, setSettings] = useState(getSettings);
   const [form, setForm] = useState(() => buildInitialForm(settings, editingQuote));
@@ -1021,7 +1140,6 @@ export default function CalculatorPage({
   const suggestedVinylFee = suggestVinylService(form);
   const suggestedIntegrationLevel = suggestIntegrationComplexity(form.jobAspects);
   const suggestedIntegration = suggestIntegrationFee(settings, form);
-
   const totals = useMemo(() => {
     const quantity = usesQuantity ? Math.max(1, num(form.quantity)) : 1;
 
@@ -1113,9 +1231,17 @@ export default function CalculatorPage({
       minimumReason = `CAD + print minimum applied if needed: ${money(settings.minimumCharges.cadPrintMinimum)}.`;
     }
 
-    if (form.jobAspects.engraving) minimumFloor = Math.max(minimumFloor, num(settings.minimumCharges.engravingMinimum));
-    if (form.jobAspects.vinyl) minimumFloor = Math.max(minimumFloor, num(settings.minimumCharges.vinylMinimum));
-    if (form.jobAspects.custom) minimumFloor = Math.max(minimumFloor, num(settings.minimumCharges.customMinimum));
+    if (form.jobAspects.engraving) {
+      minimumFloor = Math.max(minimumFloor, num(settings.minimumCharges.engravingMinimum));
+    }
+
+    if (form.jobAspects.vinyl) {
+      minimumFloor = Math.max(minimumFloor, num(settings.minimumCharges.vinylMinimum));
+    }
+
+    if (form.jobAspects.custom) {
+      minimumFloor = Math.max(minimumFloor, num(settings.minimumCharges.customMinimum));
+    }
 
     const minimumAdjustment = Math.max(0, minimumFloor - subtotalBeforeMinimum);
     const subtotalBeforeDiscount = subtotalBeforeMinimum + minimumAdjustment;
@@ -1128,6 +1254,7 @@ export default function CalculatorPage({
 
     const customerSubtotalBase = Math.max(1, directSubtotal);
     const markupPool = quoteBuffer + minimumAdjustment;
+
     const applyMarkup = (value) => {
       if (value <= 0) return 0;
       return roundUpMoney(value + markupPool * (value / customerSubtotalBase));
@@ -1226,7 +1353,8 @@ export default function CalculatorPage({
     settings,
     materialPriceMode,
   ]);
-    const customerFacingLines = useMemo(() => {
+
+  const customerFacingLines = useMemo(() => {
     return buildCustomerFacingLines(totals, form);
   }, [totals, form]);
 
@@ -1285,8 +1413,7 @@ export default function CalculatorPage({
     setCustomerSearch("");
     setDismissedCustomerKeys([]);
   }
-
-  function duplicateTemplate(template) {
+      function duplicateTemplate(template) {
     const now = new Date().toISOString();
 
     const nextTemplate = {
@@ -1565,7 +1692,7 @@ export default function CalculatorPage({
       editingQuote?.id || null
     );
   }
-    return (
+      return (
     <section className="page-panel">
       <div className="page-heading-row">
         <div>
@@ -1575,7 +1702,8 @@ export default function CalculatorPage({
 
           <p className="muted-text">
             Quote builder with customer-facing pricing, internal pricing, templates,
-            catalog materials, machine time, deposits, tax, and markup protection.
+            catalog materials, inventory awareness, machine time, deposits, tax,
+            and markup protection.
           </p>
 
           {editingQuote && (
@@ -1589,13 +1717,15 @@ export default function CalculatorPage({
           <button
             className="secondary-button"
             type="button"
-            onClick={() => setSummaryMode(summaryMode === "customer" ? "internal" : "customer")}
+            onClick={() =>
+              setSummaryMode(summaryMode === "customer" ? "internal" : "customer")
+            }
           >
             {summaryMode === "customer" ? <Eye size={18} /> : <EyeOff size={18} />}
             {summaryMode === "customer" ? "Customer View" : "Internal View"}
           </button>
 
-          <button className="secondary-button" onClick={resetCalculator}>
+          <button className="secondary-button" type="button" onClick={resetCalculator}>
             <RotateCcw size={18} />
             Reset
           </button>
@@ -1607,9 +1737,7 @@ export default function CalculatorPage({
           <div className="page-heading-row">
             <div>
               <h3 className="card-title">Quote Templates</h3>
-              <p className="muted-text">
-                Save repeatable setups for common work.
-              </p>
+              <p className="muted-text">Save repeatable setups for common work.</p>
             </div>
 
             <button
@@ -1643,7 +1771,9 @@ export default function CalculatorPage({
               <input
                 type="checkbox"
                 checked={templateDraft.favorite}
-                onChange={(event) => updateTemplateDraft("favorite", event.target.checked)}
+                onChange={(event) =>
+                  updateTemplateDraft("favorite", event.target.checked)
+                }
               />
               <span>Favorite Template</span>
             </label>
@@ -1703,22 +1833,38 @@ export default function CalculatorPage({
                       {template.notes && <p className="helper-note">{template.notes}</p>}
 
                       <div className="record-button-row quote-button-row single-row-gap">
-                        <button className="primary-button" type="button" onClick={() => loadTemplate(template)}>
+                        <button
+                          className="primary-button"
+                          type="button"
+                          onClick={() => loadTemplate(template)}
+                        >
                           <Copy size={18} />
                           Load
                         </button>
 
-                        <button className="secondary-button" type="button" onClick={() => toggleTemplateFavorite(template.id)}>
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          onClick={() => toggleTemplateFavorite(template.id)}
+                        >
                           <Star size={18} />
                           {template.favorite ? "Unfavorite" : "Favorite"}
                         </button>
 
-                        <button className="secondary-button" type="button" onClick={() => duplicateTemplate(template)}>
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          onClick={() => duplicateTemplate(template)}
+                        >
                           <Copy size={18} />
                           Duplicate
                         </button>
 
-                        <button className="secondary-button danger-button" type="button" onClick={() => deleteTemplate(template.id)}>
+                        <button
+                          className="secondary-button danger-button"
+                          type="button"
+                          onClick={() => deleteTemplate(template.id)}
+                        >
                           <Trash2 size={18} />
                           Delete
                         </button>
@@ -1730,8 +1876,7 @@ export default function CalculatorPage({
             </div>
           )}
         </div>
-
-        <div className="form-card full-span">
+                <div className="form-card full-span">
           <h3 className="card-title">Customer Info</h3>
 
           <label className="field single-row-gap">
@@ -1759,10 +1904,13 @@ export default function CalculatorPage({
                     <div className="customer-match-main">
                       <strong>{customer.name}</strong>
                       <span>
-                        {customer.phone || "No phone"} • {customer.email || "No email"}
+                        {customer.phone || "No phone"} •{" "}
+                        {customer.email || "No email"}
                       </span>
                       <small>
-                        {customer.totalQuotes || 0} quote(s) • {customer.totalJobs || 0} job(s) • {money(customer.totalValue || 0)}
+                        {customer.totalQuotes || 0} quote(s) •{" "}
+                        {customer.totalJobs || 0} job(s) •{" "}
+                        {money(customer.totalValue || 0)}
                       </small>
                     </div>
                   </button>
@@ -1776,17 +1924,26 @@ export default function CalculatorPage({
               <div>
                 <strong>Possible repeat customer: {bestCustomerMatch.name}</strong>
                 <span>
-                  {bestCustomerMatch.phone || "No phone"} • {bestCustomerMatch.email || "No email"}
+                  {bestCustomerMatch.phone || "No phone"} •{" "}
+                  {bestCustomerMatch.email || "No email"}
                 </span>
               </div>
 
               <div className="customer-match-actions">
-                <button className="secondary-button" type="button" onClick={() => dismissCustomerMatch(bestCustomerMatch.key)}>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={() => dismissCustomerMatch(bestCustomerMatch.key)}
+                >
                   <XCircle size={18} />
                   Ignore
                 </button>
 
-                <button className="primary-button" type="button" onClick={() => applyCustomer(bestCustomerMatch)}>
+                <button
+                  className="primary-button"
+                  type="button"
+                  onClick={() => applyCustomer(bestCustomerMatch)}
+                >
                   <UserCheck size={18} />
                   Autofill
                 </button>
@@ -1877,7 +2034,8 @@ export default function CalculatorPage({
             </div>
           )}
         </div>
-                <div className="form-card full-span">
+
+        <div className="form-card full-span">
           <h3 className="card-title">Project Basics</h3>
 
           <Field
@@ -1937,25 +2095,35 @@ export default function CalculatorPage({
             </div>
           </div>
         )}
-
-        {form.jobAspects.printing && (
+                  {form.jobAspects.printing && (
           <div className="form-card full-span">
             <div className="page-heading-row">
               <div>
                 <h3 className="card-title">3D Printing</h3>
+
                 <p className="muted-text">
                   Add one print run for each unique machine/material/nozzle combo.
-                  Material prices come from the catalog using {materialPriceMode.toUpperCase()} pricing.
+                  Material prices come from the catalog using{" "}
+                  {materialPriceMode.toUpperCase()} pricing, and stock warnings
+                  come from your owned inventory.
                 </p>
               </div>
 
               <div className="record-button-row">
-                <button className="secondary-button" type="button" onClick={refreshCatalogPricing}>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={refreshCatalogPricing}
+                >
                   <Wand2 size={18} />
                   Refresh Catalog Pricing
                 </button>
 
-                <button className="secondary-button" type="button" onClick={addPrintRun}>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={addPrintRun}
+                >
                   <Plus size={18} />
                   Add Print Run
                 </button>
@@ -1966,16 +2134,26 @@ export default function CalculatorPage({
               {form.printRuns.map((run, index) => {
                 const material = getPrintMaterialById(settings, run.materialId);
                 const nozzle = getNozzle(settings, run.nozzleSize);
+
                 const costPerGram =
-                  run.materialCostPerGram !== undefined && run.materialCostPerGram !== ""
+                  run.materialCostPerGram !== undefined &&
+                  run.materialCostPerGram !== ""
                     ? num(run.materialCostPerGram)
                     : num(material.costPerGram);
+
+                const stockInfo = getStockInfoForMaterial(
+                  inventoryItems,
+                  material,
+                  run.materialGrams
+                );
 
                 return (
                   <div className="vinyl-line" key={run.id}>
                     <div className="vinyl-line-header">
                       <strong>
-                        {renderMaterialSwatch(run.materialHexCode || material.hexCode)}
+                        {renderMaterialSwatch(
+                          run.materialHexCode || material.hexCode
+                        )}
                         Print Run {index + 1}
                       </strong>
 
@@ -1990,10 +2168,15 @@ export default function CalculatorPage({
                     <div className="form-grid">
                       <label className="field">
                         <span>Printer</span>
+
                         <select
                           value={run.printerId}
                           onChange={(event) =>
-                            updatePrintRun(run.id, "printerId", event.target.value)
+                            updatePrintRun(
+                              run.id,
+                              "printerId",
+                              event.target.value
+                            )
                           }
                         >
                           {activePrinters.map((printer) => (
@@ -2006,10 +2189,15 @@ export default function CalculatorPage({
 
                       <label className="field">
                         <span>Catalog Material</span>
+
                         <select
                           value={run.materialId}
                           onChange={(event) =>
-                            updatePrintRun(run.id, "materialId", event.target.value)
+                            updatePrintRun(
+                              run.id,
+                              "materialId",
+                              event.target.value
+                            )
                           }
                         >
                           {activePrintMaterials.map((item) => (
@@ -2022,10 +2210,15 @@ export default function CalculatorPage({
 
                       <label className="field">
                         <span>Nozzle</span>
+
                         <select
                           value={run.nozzleSize}
                           onChange={(event) =>
-                            updatePrintRun(run.id, "nozzleSize", event.target.value)
+                            updatePrintRun(
+                              run.id,
+                              "nozzleSize",
+                              event.target.value
+                            )
                           }
                         >
                           {activeNozzles.map((item) => (
@@ -2064,7 +2257,11 @@ export default function CalculatorPage({
                         label="Material Cost / Gram"
                         value={costPerGram}
                         onChange={(value) =>
-                          updatePrintRun(run.id, "materialCostPerGram", value)
+                          updatePrintRun(
+                            run.id,
+                            "materialCostPerGram",
+                            value
+                          )
                         }
                       />
 
@@ -2085,10 +2282,12 @@ export default function CalculatorPage({
                         : ""}
                       {material.hexCode || run.materialHexCode
                         ? ` • ${material.hexCode || run.materialHexCode}`
-                        : ""}
-                      {" "}• Setup suggestion: {suggestedSetupTier(material, nozzle)} —{" "}
+                        : ""}{" "}
+                      • Setup suggestion: {suggestedSetupTier(material, nozzle)} —{" "}
                       {setupReason(material, nozzle)}
                     </p>
+
+                    {renderStockNotice(stockInfo, "g")}
                   </div>
                 );
               })}
@@ -2117,16 +2316,19 @@ export default function CalculatorPage({
             </div>
           </div>
         )}
-                {form.jobAspects.engraving && (
+                  {form.jobAspects.engraving && (
           <div className="form-card">
             <h3 className="card-title">Laser Engraving</h3>
 
             <div className="form-grid">
               <label className="field">
                 <span>Laser Module</span>
+
                 <select
                   value={form.engravingModuleId}
-                  onChange={(event) => update("engravingModuleId", event.target.value)}
+                  onChange={(event) =>
+                    update("engravingModuleId", event.target.value)
+                  }
                 >
                   {activeLasers.map((module) => (
                     <option key={module.id} value={module.id}>
@@ -2138,6 +2340,7 @@ export default function CalculatorPage({
 
               <label className="field">
                 <span>Material</span>
+
                 <select
                   value={form.engravingMaterialId}
                   onChange={(event) => updateEngravingMaterial(event.target.value)}
@@ -2152,9 +2355,12 @@ export default function CalculatorPage({
 
               <label className="field">
                 <span>Color / Finish</span>
+
                 <select
                   value={form.engravingMaterialColor}
-                  onChange={(event) => update("engravingMaterialColor", event.target.value)}
+                  onChange={(event) =>
+                    update("engravingMaterialColor", event.target.value)
+                  }
                 >
                   {colorsToArray(selectedEngravingMaterial.colors).map((color) => (
                     <option key={color} value={color}>
@@ -2172,9 +2378,12 @@ export default function CalculatorPage({
 
               <label className="field">
                 <span>Complexity</span>
+
                 <select
                   value={form.engravingComplexity}
-                  onChange={(event) => update("engravingComplexity", event.target.value)}
+                  onChange={(event) =>
+                    update("engravingComplexity", event.target.value)
+                  }
                 >
                   {COMPLEXITY_LEVELS.map((level) => (
                     <option key={level.id} value={level.id}>
@@ -2200,7 +2409,9 @@ export default function CalculatorPage({
               Use Suggested Engraving Fee ({money(suggestedEngravingFee)})
             </button>
 
-            <p className="helper-note">Module: {selectedEngravingModule.label || "Laser"}.</p>
+            <p className="helper-note">
+              Module: {selectedEngravingModule.label || "Laser"}.
+            </p>
           </div>
         )}
 
@@ -2209,7 +2420,9 @@ export default function CalculatorPage({
             <div className="page-heading-row">
               <div>
                 <h3 className="card-title">Vinyl / Cutter</h3>
-                <p className="muted-text">Add one material line per color/layer/material.</p>
+                <p className="muted-text">
+                  Add one material line per color/layer/material.
+                </p>
               </div>
 
               <button className="secondary-button" type="button" onClick={addVinylLine}>
@@ -2220,6 +2433,7 @@ export default function CalculatorPage({
 
             <label className="field single-row-gap">
               <span>Cutter Module</span>
+
               <select
                 value={form.vinylModuleId}
                 onChange={(event) => update("vinylModuleId", event.target.value)}
@@ -2246,6 +2460,7 @@ export default function CalculatorPage({
                     <div className="form-grid">
                       <label className="field">
                         <span>Material</span>
+
                         <select
                           value={line.materialId}
                           onChange={(event) =>
@@ -2262,6 +2477,7 @@ export default function CalculatorPage({
 
                       <label className="field">
                         <span>Color</span>
+
                         <select
                           value={line.color}
                           onChange={(event) =>
@@ -2299,6 +2515,7 @@ export default function CalculatorPage({
             <div className="form-grid single-row-gap">
               <label className="field">
                 <span>Complexity</span>
+
                 <select
                   value={form.vinylComplexity}
                   onChange={(event) => update("vinylComplexity", event.target.value)}
@@ -2327,20 +2544,24 @@ export default function CalculatorPage({
               Use Suggested Vinyl Fee ({money(suggestedVinylFee)})
             </button>
 
-            <p className="helper-note">Module: {selectedVinylModule.label || "Cutter"}.</p>
+            <p className="helper-note">
+              Module: {selectedVinylModule.label || "Cutter"}.
+            </p>
           </div>
         )}
-
-        {activeProcessCount(form.jobAspects) > 1 && (
+                  {activeProcessCount(form.jobAspects) > 1 && (
           <div className="form-card">
             <h3 className="card-title">Project Integration</h3>
 
             <div className="form-grid">
               <label className="field">
                 <span>Integration Complexity</span>
+
                 <select
                   value={form.integrationComplexity}
-                  onChange={(event) => update("integrationComplexity", event.target.value)}
+                  onChange={(event) =>
+                    update("integrationComplexity", event.target.value)
+                  }
                 >
                   <option value="none">None</option>
                   <option value="simple">Simple</option>
@@ -2367,7 +2588,8 @@ export default function CalculatorPage({
             </button>
 
             <p className="helper-note">
-              Suggested integration level: {suggestedIntegrationLevel}. This covers combining multiple services into one deliverable.
+              Suggested integration level: {suggestedIntegrationLevel}. This
+              covers combining multiple services into one deliverable.
             </p>
           </div>
         )}
@@ -2383,7 +2605,8 @@ export default function CalculatorPage({
             />
           </div>
         )}
-                <div className="form-card">
+
+        <div className="form-card">
           <h3 className="card-title">Finishing / Extra Labor</h3>
 
           <div className="form-grid">
@@ -2471,6 +2694,7 @@ export default function CalculatorPage({
 
           <label className="field">
             <span>Internal / Quote Notes</span>
+
             <textarea
               value={form.notes}
               onChange={(event) => update("notes", event.target.value)}
@@ -2493,15 +2717,14 @@ export default function CalculatorPage({
               </p>
             </div>
 
-            <button className="primary-button" onClick={saveQuote}>
+            <button className="primary-button" type="button" onClick={saveQuote}>
               <Save size={18} />
               {editingQuote ? "Save Quote Changes" : "Save Quote"}
             </button>
           </div>
-
-          {summaryMode === "customer" ? (
-            <>
-              <div className="summary-grid">
+                    <div className="summary-grid single-row-gap">
+            {summaryMode === "customer" ? (
+              <>
                 {customerFacingLines.map(([label, value]) => (
                   <div key={label}>
                     <span>{label}</span>
@@ -2509,12 +2732,24 @@ export default function CalculatorPage({
                   </div>
                 ))}
 
-                {form.discount > 0 && (
+                {totals.minimumAdjustment > 0 && (
+                  <div>
+                    <span>Minimum Adjustment</span>
+                    <strong>{money(totals.minimumAdjustment)}</strong>
+                  </div>
+                )}
+
+                {num(form.discount) > 0 && (
                   <div>
                     <span>Discount</span>
                     <strong>-{money(form.discount)}</strong>
                   </div>
                 )}
+
+                <div>
+                  <span>Subtotal</span>
+                  <strong>{money(totals.subtotal)}</strong>
+                </div>
 
                 {form.taxEnabled && (
                   <div>
@@ -2524,19 +2759,16 @@ export default function CalculatorPage({
                 )}
 
                 <div>
-                  <span>Quantity</span>
-                  <strong>{totals.quantity}</strong>
-                </div>
-
-                <div>
-                  <span>Per Unit</span>
-                  <strong>{money(totals.perUnit)}</strong>
-                </div>
-
-                <div className="summary-total">
-                  <span>Final Total</span>
+                  <span>Total</span>
                   <strong>{money(totals.finalTotal)}</strong>
                 </div>
+
+                {usesQuantity && (
+                  <div>
+                    <span>Per Unit</span>
+                    <strong>{money(totals.perUnit)}</strong>
+                  </div>
+                )}
 
                 <div>
                   <span>Suggested Deposit</span>
@@ -2547,11 +2779,9 @@ export default function CalculatorPage({
                   <span>Remaining Balance</span>
                   <strong>{money(totals.remainingBalance)}</strong>
                 </div>
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="summary-grid">
+              </>
+            ) : (
+              <>
                 <div>
                   <span>Print Material Cost</span>
                   <strong>{money(totals.printMaterialCost)}</strong>
@@ -2598,7 +2828,7 @@ export default function CalculatorPage({
                 </div>
 
                 <div>
-                  <span>Custom Fee</span>
+                  <span>Custom Work</span>
                   <strong>{money(totals.customCost)}</strong>
                 </div>
 
@@ -2608,7 +2838,7 @@ export default function CalculatorPage({
                 </div>
 
                 <div>
-                  <span>Setup Fee</span>
+                  <span>Print Setup</span>
                   <strong>{money(totals.setupFee)}</strong>
                 </div>
 
@@ -2618,31 +2848,37 @@ export default function CalculatorPage({
                 </div>
 
                 <div>
-                  <span>Quote Buffer</span>
+                  <span>Quote Buffer ({totals.appliedBufferPercent}%)</span>
                   <strong>{money(totals.quoteBuffer)}</strong>
                 </div>
 
-                <div>
-                  <span>Minimum Adjustment</span>
-                  <strong>{money(totals.minimumAdjustment)}</strong>
-                </div>
+                {totals.minimumAdjustment > 0 && (
+                  <div>
+                    <span>Minimum Adjustment</span>
+                    <strong>{money(totals.minimumAdjustment)}</strong>
+                  </div>
+                )}
+
+                {num(form.discount) > 0 && (
+                  <div>
+                    <span>Discount</span>
+                    <strong>-{money(form.discount)}</strong>
+                  </div>
+                )}
 
                 <div>
-                  <span>Subtotal Before Discount</span>
-                  <strong>{money(totals.subtotalBeforeDiscount)}</strong>
+                  <span>Subtotal</span>
+                  <strong>{money(totals.subtotal)}</strong>
                 </div>
+
+                {form.taxEnabled && (
+                  <div>
+                    <span>Tax</span>
+                    <strong>{money(totals.tax)}</strong>
+                  </div>
+                )}
 
                 <div>
-                  <span>Discount</span>
-                  <strong>-{money(form.discount)}</strong>
-                </div>
-
-                <div>
-                  <span>Tax</span>
-                  <strong>{money(totals.tax)}</strong>
-                </div>
-
-                <div className="summary-total">
                   <span>Final Total</span>
                   <strong>{money(totals.finalTotal)}</strong>
                 </div>
@@ -2656,43 +2892,70 @@ export default function CalculatorPage({
                   <span>Remaining</span>
                   <strong>{money(totals.remainingBalance)}</strong>
                 </div>
+              </>
+            )}
+          </div>
+
+          <div className="form-card single-row-gap">
+            <h3 className="card-title">Market Positioning Estimate</h3>
+
+            <div className="summary-grid">
+              <div>
+                <span>Budget Market</span>
+                <strong>
+                  {money(totals.market.budgetLow)} -{" "}
+                  {money(totals.market.budgetHigh)}
+                </strong>
               </div>
 
-              <div className="form-card single-row-gap">
-                <h3 className="card-title">Market Position Estimate</h3>
-
-                <div className="summary-grid">
-                  <div>
-                    <span>Budget Range</span>
-                    <strong>
-                      {money(totals.market.budgetLow)} – {money(totals.market.budgetHigh)}
-                    </strong>
-                  </div>
-
-                  <div>
-                    <span>Average Range</span>
-                    <strong>
-                      {money(totals.market.averageLow)} – {money(totals.market.averageHigh)}
-                    </strong>
-                  </div>
-
-                  <div>
-                    <span>Premium Range</span>
-                    <strong>
-                      {money(totals.market.premiumLow)} – {money(totals.market.premiumHigh)}
-                    </strong>
-                  </div>
-                </div>
+              <div>
+                <span>Average Market</span>
+                <strong>
+                  {money(totals.market.averageLow)} -{" "}
+                  {money(totals.market.averageHigh)}
+                </strong>
               </div>
-            </>
+
+              <div>
+                <span>Premium Market</span>
+                <strong>
+                  {money(totals.market.premiumLow)} -{" "}
+                  {money(totals.market.premiumHigh)}
+                </strong>
+              </div>
+            </div>
+
+            <p className="helper-note">
+              These ranges are informational only and are based on complexity,
+              service stacking, nozzle choice, specialty materials, and market
+              positioning.
+            </p>
+          </div>
+
+          {form.notes && (
+            <div className="customer-warning-box">
+              <strong>Notes</strong>
+              <p>{form.notes}</p>
+            </div>
           )}
 
-          {editingQuote && (
-            <button className="secondary-button single-row-gap" onClick={onCancelEdit}>
-              <XCircle size={18} />
-              Cancel Editing
+          <div className="record-button-row single-row-gap">
+            <button className="primary-button" type="button" onClick={saveQuote}>
+              <Save size={18} />
+              {editingQuote ? "Save Quote Changes" : "Save Quote"}
             </button>
-          )}
+
+            {editingQuote && (
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={onCancelEdit}
+              >
+                <XCircle size={18} />
+                Cancel Edit
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </section>

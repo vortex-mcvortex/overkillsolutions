@@ -1,7 +1,3 @@
-// NOTE: This is the same JobsPage structure as the last batch, with a new
-// job attachment tracker added. It stores attachment records directly on each job
-// as job.attachments, so no App.jsx changes are needed.
-
 import { useMemo, useRef, useState } from "react";
 import {
   Plus,
@@ -223,7 +219,6 @@ function getDueDateStatus(job) {
     isDueSoon: false,
   };
 }
-
 function getArchiveDeleteInfo(job) {
   if (!job.archivedAt) {
     return {
@@ -288,6 +283,8 @@ function matchesJobSearch(job, searchTerm) {
     getPriority(job),
     job.dueDate,
     job.queueNotes,
+    job.inventoryDeductedAt ? "inventory deducted" : "",
+    job.inventoryDeductionSkipped ? "inventory deduction skipped" : "",
     ...attachments.flatMap((attachment) => [
       attachment.name,
       attachment.type,
@@ -460,7 +457,6 @@ function buildMachineOptions(job) {
 
   return options;
 }
-
 function sortEventsOldestFirst(events) {
   return [...events].sort((a, b) => {
     const aDate = getEventDateTime(a);
@@ -565,6 +561,31 @@ function getJobAttachments(job) {
   return job.attachments || [];
 }
 
+function hasInventoryDeductionRecord(job) {
+  return Boolean(job.inventoryDeductedAt || job.inventoryDeductionSkipped);
+}
+
+function getInventoryCompletionStatus(job) {
+  if (job.inventoryDeductedAt) {
+    return {
+      label: `Inventory deducted ${new Date(job.inventoryDeductedAt).toLocaleString()}`,
+      tone: "success",
+    };
+  }
+
+  if (job.inventoryDeductionSkipped) {
+    return {
+      label: "Inventory deduction skipped",
+      tone: "warning",
+    };
+  }
+
+  return {
+    label: "Inventory not finalized",
+    tone: "neutral",
+  };
+}
+
 export default function JobsPage({
   jobs,
   inventoryItems = [],
@@ -634,8 +655,10 @@ export default function JobsPage({
     (sum, job) => sum + getJobAttachments(job).length,
     0
   );
-
-  function getMaterialUsageDraft(jobId) {
+  const pendingInventoryFinalizationCount = activeJobs.filter(
+    (job) => job.status !== "Completed" && getJobMaterialUsage(job).length > 0 && !hasInventoryDeductionRecord(job)
+  ).length;
+    function getMaterialUsageDraft(jobId) {
     return materialUsageDrafts[jobId] || EMPTY_MATERIAL_USAGE;
   }
 
@@ -861,13 +884,14 @@ export default function JobsPage({
       timeEvents: (job.timeEvents || []).filter((event) => event.id !== eventId),
     });
   }
-
-  function markJobCompleted(jobId) {
+    function markJobCompleted(jobId) {
     const job = jobs.find((item) => item.id === jobId);
     if (!job) return;
 
     const openTimers = getOpenTimers(job.timeEvents || []);
     const remainingBalance = getRemainingBalance(job);
+    const materialUsageEvents = getJobMaterialUsage(job);
+    const now = new Date().toISOString();
 
     if (openTimers.length > 0) {
       const stopTimers = window.confirm(
@@ -887,11 +911,56 @@ export default function JobsPage({
       if (!confirmed) return;
     }
 
+    if (hasInventoryDeductionRecord(job)) {
+      onUpdateJob(jobId, {
+        status: "Completed",
+        completedAt: job.completedAt || now,
+        archiveEligibleAt:
+          job.archiveEligibleAt ||
+          new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        lastSavedAt: now,
+      });
+      return;
+    }
+
+    if (materialUsageEvents.length === 0) {
+      const skipInventory = window.confirm(
+        "No job-linked material usage has been logged for this job.\n\nMark completed anyway and flag inventory deduction as skipped?"
+      );
+
+      if (!skipInventory) return;
+
+      onUpdateJob(jobId, {
+        status: "Completed",
+        completedAt: now,
+        archiveEligibleAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        inventoryDeductionSkipped: true,
+        inventoryDeductionSkippedAt: now,
+        inventoryDeductionNotes:
+          "Completed without job-linked material usage. Inventory deduction was skipped.",
+        lastSavedAt: now,
+      });
+
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `This job has ${materialUsageEvents.length} material usage log${
+        materialUsageEvents.length === 1 ? "" : "s"
+      } already deducted from inventory.\n\nFinalize job and mark inventory deduction complete?`
+    );
+
+    if (!confirmed) return;
+
     onUpdateJob(jobId, {
       status: "Completed",
-      completedAt: new Date().toISOString(),
+      completedAt: now,
       archiveEligibleAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-      lastSavedAt: new Date().toISOString(),
+      inventoryDeductedAt: now,
+      inventoryDeductionSkipped: false,
+      inventoryDeductionNotes:
+        "Inventory deduction finalized from existing job-linked material usage logs.",
+      lastSavedAt: now,
     });
   }
 
@@ -972,6 +1041,14 @@ export default function JobsPage({
       return;
     }
 
+    if (hasInventoryDeductionRecord(job)) {
+      const confirmed = window.confirm(
+        "This job has already been finalized for inventory deduction or was marked as skipped.\n\nAdd another material usage record anyway?"
+      );
+
+      if (!confirmed) return;
+    }
+
     const draft = getMaterialUsageDraft(jobId);
     const inventoryItem = inventoryItems.find((item) => item.id === draft.itemId);
     const quantityUsed = Math.abs(num(draft.quantityUsed));
@@ -1036,13 +1113,15 @@ export default function JobsPage({
         ...existingActuals,
         materialCost: Math.max(num(existingActuals.materialCost), loggedMaterialTotal),
       },
+      inventoryDeductedAt: "",
+      inventoryDeductionSkipped: false,
+      inventoryDeductionSkippedAt: "",
       lastSavedAt: now,
     });
 
     resetMaterialUsageDraft(jobId);
   }
-
-  function removeMaterialUsageEvent(jobId, usageEventId) {
+    function removeMaterialUsageEvent(jobId, usageEventId) {
     const job = jobs.find((item) => item.id === jobId);
     if (!job) return;
 
@@ -1069,6 +1148,10 @@ export default function JobsPage({
         ...(job.actuals || {}),
         materialCost: nextLoggedMaterialTotal,
       },
+      inventoryDeductedAt: "",
+      inventoryDeductionSkipped: false,
+      inventoryDeductionSkippedAt: "",
+      inventoryDeductionNotes: "",
       lastSavedAt: new Date().toISOString(),
     });
 
@@ -1201,6 +1284,7 @@ export default function JobsPage({
     const draft = getMaterialUsageDraft(job.id);
     const selectedItem = inventoryItems.find((item) => item.id === draft.itemId);
     const usageEvents = getJobMaterialUsage(job);
+    const inventoryStatus = getInventoryCompletionStatus(job);
 
     return (
       <div className="form-card">
@@ -1216,6 +1300,16 @@ export default function JobsPage({
             <PackageSearch size={14} />
             {usageEvents.length} Usage Log{usageEvents.length === 1 ? "" : "s"}
           </span>
+        </div>
+
+        <div className="customer-warning-box">
+          <strong>
+            <PackageSearch size={18} /> Inventory Completion Status
+          </strong>
+          <p>
+            {inventoryStatus.label}
+            {job.inventoryDeductionNotes ? ` — ${job.inventoryDeductionNotes}` : ""}
+          </p>
         </div>
 
         {lowStockItems.length > 0 && (
@@ -1361,8 +1455,7 @@ export default function JobsPage({
       </div>
     );
   }
-
-  function renderJobCard(job) {
+    function renderJobCard(job) {
     const actuals = {
       materialCost: 0,
       failedPrintCost: 0,
@@ -1396,6 +1489,7 @@ export default function JobsPage({
     const priority = getPriority(job);
     const archiveInfo = getArchiveDeleteInfo(job);
     const remainingBalance = getRemainingBalance(job);
+    const inventoryStatus = getInventoryCompletionStatus(job);
 
     return (
       <article
@@ -1428,6 +1522,9 @@ export default function JobsPage({
                 {getJobMaterialUsage(job).length === 1 ? "" : "s"}
               </span>
             )}
+
+            {job.inventoryDeductedAt && <span className="status-pill">Inventory Finalized</span>}
+            {job.inventoryDeductionSkipped && <span className="status-pill">Inventory Skipped</span>}
 
             {attachments.length > 0 && (
               <span className="status-pill">
@@ -1472,6 +1569,8 @@ export default function JobsPage({
                 <span className="status-pill">
                   {job.dueDate ? `${job.dueDate} • ${dueStatus.label}` : dueStatus.label}
                 </span>
+
+                <span className="status-pill">{inventoryStatus.label}</span>
 
                 <span className={`payment-status-pill payment-${slug(paymentStatus)}`}>
                   {paymentStatus}
@@ -1521,7 +1620,8 @@ export default function JobsPage({
                   Completed {job.completedAt ? new Date(job.completedAt).toLocaleString() : "recently"}.
                   {remainingBalance > 0
                     ? ` Remaining balance: ${money(remainingBalance)}.`
-                    : " No remaining balance."}
+                    : " No remaining balance."}{" "}
+                  {inventoryStatus.label}.
                 </p>
               </div>
             )}
@@ -1613,9 +1713,9 @@ export default function JobsPage({
               {getJobMaterialUsage(job).length > 0 && (
                 <span>{getJobMaterialUsage(job).length} Material Usage Log(s)</span>
               )}
-              {attachments.length > 0 && (
-                <span>{attachments.length} Attachment(s)</span>
-              )}
+              {job.inventoryDeductedAt && <span>Inventory Finalized</span>}
+              {job.inventoryDeductionSkipped && <span>Inventory Skipped</span>}
+              {attachments.length > 0 && <span>{attachments.length} Attachment(s)</span>}
             </div>
 
             {job.queueNotes && <p className="helper-note">Queue Notes: {job.queueNotes}</p>}
@@ -2084,6 +2184,7 @@ export default function JobsPage({
         <div><span>High Priority</span><strong>{highPriorityCount}</strong></div>
         <div><span>Active Timers</span><strong>{activeTimerCount}</strong></div>
         <div><span>Low Stock</span><strong>{lowStockItems.length}</strong></div>
+        <div><span>Pending Inventory</span><strong>{pendingInventoryFinalizationCount}</strong></div>
         <div><span>Attachments</span><strong>{attachmentCount}</strong></div>
         <div><span>Archived Jobs</span><strong>{archivedJobs.length}</strong></div>
         <div>

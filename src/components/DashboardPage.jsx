@@ -9,6 +9,7 @@ import {
   PackageSearch,
   Play,
   TimerOff,
+  TrendingUp,
 } from "lucide-react";
 
 function money(value) {
@@ -160,7 +161,6 @@ function getQuoteAgeDays(quote) {
 
   return Math.max(0, Math.floor((today - created) / 1000 / 60 / 60 / 24));
 }
-
 function getQuoteExpirationInfo(quote) {
   if (!quote.expiresAt) {
     return {
@@ -307,7 +307,11 @@ function calculateKnownCosts(job) {
 }
 
 function isLowStock(item) {
-  return item.active !== false && num(item.quantityOnHand) <= num(item.reorderThreshold);
+  return (
+    item.active !== false &&
+    num(item.reorderThreshold) > 0 &&
+    num(item.quantityOnHand) <= num(item.reorderThreshold)
+  );
 }
 
 function isOutOfStock(item) {
@@ -316,6 +320,146 @@ function isOutOfStock(item) {
 
 function getInventoryValue(item) {
   return num(item.quantityOnHand) * num(item.unitCost);
+}
+
+function getJobMaterialUsage(job) {
+  return job.materialUsageEvents || [];
+}
+
+function hasInventoryFinalized(job) {
+  return Boolean(job.inventoryDeductedAt || job.inventoryDeductionSkipped);
+}
+
+function getMaterialUsageAnalytics(jobs) {
+  const usageMap = new Map();
+
+  jobs.forEach((job) => {
+    getJobMaterialUsage(job).forEach((usage) => {
+      const key = usage.itemId || usage.itemName || "unknown";
+
+      if (!usageMap.has(key)) {
+        usageMap.set(key, {
+          id: key,
+          itemId: usage.itemId,
+          itemName: usage.itemName || "Unknown Material",
+          category: usage.category || "Other",
+          material: usage.material || "",
+          color: usage.color || "",
+          totalQuantity: 0,
+          unit: usage.unit || "",
+          totalCost: 0,
+          usageCount: 0,
+          jobs: new Set(),
+          lastUsedAt: "",
+        });
+      }
+
+      const entry = usageMap.get(key);
+
+      entry.totalQuantity += num(usage.quantityUsed);
+      entry.totalCost += num(usage.estimatedCost);
+      entry.usageCount += 1;
+      entry.unit = entry.unit || usage.unit || "";
+      entry.jobs.add(job.jobNumber || job.id);
+
+      if (!entry.lastUsedAt || new Date(usage.createdAt || 0) > new Date(entry.lastUsedAt || 0)) {
+        entry.lastUsedAt = usage.createdAt || "";
+      }
+    });
+  });
+
+  return [...usageMap.values()]
+    .map((entry) => ({
+      ...entry,
+      jobCount: entry.jobs.size,
+      jobs: [...entry.jobs],
+    }))
+    .sort((a, b) => b.totalCost - a.totalCost);
+}
+function getReorderRecommendations(inventoryItems, materialAnalytics) {
+  const analyticsByItemId = new Map();
+
+  materialAnalytics.forEach((entry) => {
+    if (entry.itemId) analyticsByItemId.set(entry.itemId, entry);
+  });
+
+  return inventoryItems
+    .filter((item) => item.active !== false)
+    .map((item) => {
+      const analytics = analyticsByItemId.get(item.id);
+      const quantityOnHand = num(item.quantityOnHand);
+      const reorderThreshold = num(item.reorderThreshold);
+      const usedQuantity = num(analytics?.totalQuantity);
+      const averageUse =
+        analytics && analytics.usageCount > 0
+          ? usedQuantity / analytics.usageCount
+          : 0;
+
+      const suggestedMinimum =
+        reorderThreshold > 0
+          ? reorderThreshold * 2
+          : item.category === "Filament"
+            ? 1000
+            : 1;
+
+      const usageBasedTarget =
+        averageUse > 0
+          ? Math.ceil(averageUse * 3)
+          : suggestedMinimum;
+
+      const targetQuantity = Math.max(suggestedMinimum, usageBasedTarget);
+      const suggestedReorderQuantity = Math.max(0, targetQuantity - quantityOnHand);
+
+      let urgency = "normal";
+
+      if (quantityOnHand <= 0) urgency = "danger";
+      else if (reorderThreshold > 0 && quantityOnHand <= reorderThreshold) urgency = "warning";
+
+      return {
+        ...item,
+        analytics,
+        quantityOnHand,
+        reorderThreshold,
+        usedQuantity,
+        averageUse,
+        targetQuantity,
+        suggestedReorderQuantity,
+        urgency,
+      };
+    })
+    .filter((item) => {
+      return (
+        item.quantityOnHand <= 0 ||
+        (item.reorderThreshold > 0 && item.quantityOnHand <= item.reorderThreshold) ||
+        item.suggestedReorderQuantity > 0
+      );
+    })
+    .sort((a, b) => {
+      const urgencyRank = { danger: 3, warning: 2, normal: 1 };
+      const urgencyDiff = urgencyRank[b.urgency] - urgencyRank[a.urgency];
+      if (urgencyDiff !== 0) return urgencyDiff;
+
+      return b.suggestedReorderQuantity - a.suggestedReorderQuantity;
+    });
+}
+
+function getPendingInventoryJobs(jobs) {
+  return jobs.filter((job) => {
+    if (job.archived) return false;
+    if (job.status === "Completed") return false;
+    if (hasInventoryFinalized(job)) return false;
+
+    return getJobMaterialUsage(job).length > 0;
+  });
+}
+
+function getCompletedInventoryWarningJobs(jobs) {
+  return jobs.filter((job) => {
+    if (job.archived) return false;
+    if (job.status !== "Completed") return false;
+
+    return !hasInventoryFinalized(job);
+  });
 }
 
 function getRecentActivity(quotes, jobs, inventoryLogs) {
@@ -370,6 +514,26 @@ function getRecentActivity(quotes, jobs, inventoryLogs) {
       });
     }
 
+    if (job.inventoryDeductedAt) {
+      activities.push({
+        id: `job-inventory-deducted-${job.id}`,
+        type: "Inventory Finalized",
+        title: `${job.jobNumber} inventory finalized`,
+        detail: job.jobName || "Untitled Job",
+        date: job.inventoryDeductedAt,
+      });
+    }
+
+    if (job.inventoryDeductionSkippedAt) {
+      activities.push({
+        id: `job-inventory-skipped-${job.id}`,
+        type: "Inventory Skipped",
+        title: `${job.jobNumber} inventory skipped`,
+        detail: job.inventoryDeductionNotes || job.jobName || "Untitled Job",
+        date: job.inventoryDeductionSkippedAt,
+      });
+    }
+
     if (job.archivedAt) {
       activities.push({
         id: `job-archived-${job.id}`,
@@ -406,9 +570,31 @@ function getRecentActivity(quotes, jobs, inventoryLogs) {
     .sort((a, b) => new Date(b.date) - new Date(a.date))
     .slice(0, 14);
 }
-
 function buildNeedsAttention(quotes, jobs, inventoryItems) {
   const items = [];
+
+  const pendingInventoryJobs = getPendingInventoryJobs(jobs);
+  const completedInventoryWarningJobs = getCompletedInventoryWarningJobs(jobs);
+
+  pendingInventoryJobs.forEach((job) => {
+    items.push({
+      id: `pending-inventory-${job.id}`,
+      icon: PackageSearch,
+      title: `${job.jobNumber} has unfinalized inventory usage`,
+      detail: `${getJobMaterialUsage(job).length} material usage log${getJobMaterialUsage(job).length === 1 ? "" : "s"} • ${job.customerName || "No Customer"}`,
+      severity: "warning",
+    });
+  });
+
+  completedInventoryWarningJobs.forEach((job) => {
+    items.push({
+      id: `completed-inventory-warning-${job.id}`,
+      icon: AlertTriangle,
+      title: `${job.jobNumber} completed without inventory finalization`,
+      detail: `${job.customerName || "No Customer"} • ${job.jobName || "Untitled Job"}`,
+      severity: "danger",
+    });
+  });
 
   inventoryItems.forEach((item) => {
     if (isOutOfStock(item)) {
@@ -537,7 +723,7 @@ function buildNeedsAttention(quotes, jobs, inventoryItems) {
     }
   });
 
-  return items.slice(0, 16);
+  return items.slice(0, 18);
 }
 
 function StatCard({ label, value, icon: Icon }) {
@@ -601,7 +787,21 @@ export default function DashboardPage({
   const outOfStockItems = activeInventoryItems.filter(isOutOfStock);
   const inventoryValue = inventoryItems.reduce((sum, item) => sum + getInventoryValue(item), 0);
 
-  const recentInventoryLogs = [...inventoryLogs]
+  const materialAnalytics = getMaterialUsageAnalytics(jobs);
+  const reorderRecommendations = getReorderRecommendations(inventoryItems, materialAnalytics);
+  const pendingInventoryJobs = getPendingInventoryJobs(jobs);
+  const completedInventoryWarningJobs = getCompletedInventoryWarningJobs(jobs);
+
+  const totalMaterialUsageCost = materialAnalytics.reduce(
+    (sum, material) => sum + num(material.totalCost),
+    0
+  );
+
+  const totalMaterialUsageEvents = materialAnalytics.reduce(
+    (sum, material) => sum + num(material.usageCount),
+    0
+  );
+    const recentInventoryLogs = [...inventoryLogs]
     .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
     .slice(0, 8);
 
@@ -626,7 +826,8 @@ export default function DashboardPage({
         <div>
           <h2 className="section-title brand-font">Dashboard</h2>
           <p className="muted-text">
-            Command center for quotes, jobs, payments, active timers, deadlines, stale quotes, inventory, and archive cleanup.
+            Command center for quotes, jobs, payments, active timers, deadlines,
+            stale quotes, inventory, material usage, reorder planning, and archive cleanup.
           </p>
         </div>
       </div>
@@ -642,8 +843,12 @@ export default function DashboardPage({
         <StatCard label="Archive Cleanup" value={archiveReadyJobs.length} icon={Archive} />
         <StatCard label="Low Stock" value={lowStockItems.length} icon={PackageSearch} />
         <StatCard label="Out of Stock" value={outOfStockItems.length} icon={AlertTriangle} />
+        <StatCard label="Reorder Items" value={reorderRecommendations.length} icon={PackageSearch} />
         <StatCard label="Inventory Value" value={money(inventoryValue)} icon={PackageSearch} />
-        <StatCard label="Inventory Logs" value={inventoryLogs.length} icon={PackageSearch} />
+        <StatCard label="Usage Events" value={totalMaterialUsageEvents} icon={TrendingUp} />
+        <StatCard label="Usage Cost" value={money(totalMaterialUsageCost)} icon={TrendingUp} />
+        <StatCard label="Pending Inventory" value={pendingInventoryJobs.length} icon={PackageSearch} />
+        <StatCard label="Completed Warnings" value={completedInventoryWarningJobs.length} icon={AlertTriangle} />
         <StatCard label="Quoted Value" value={money(totalQuoted)} icon={FileText} />
         <StatCard label="Active Job Value" value={money(activeJobValue)} icon={Hammer} />
         <StatCard label="Collected" value={money(collected)} icon={CreditCard} />
@@ -672,6 +877,91 @@ export default function DashboardPage({
                   </div>
                 );
               })}
+            </div>
+          )}
+        </ListCard>
+
+        <ListCard title="Reorder Recommendations">
+          {reorderRecommendations.length === 0 ? (
+            <p className="muted-text">No reorder recommendations right now.</p>
+          ) : (
+            <div className="dashboard-list">
+              {reorderRecommendations.slice(0, 10).map((item) => (
+                <div className={`dashboard-list-row attention-${item.urgency}`} key={item.id}>
+                  <div>
+                    <strong>{item.name}</strong>
+                    <span>
+                      {item.category} • {item.material || "No material"} • {item.color || "No color"}
+                    </span>
+                    <small>
+                      Used total: {item.usedQuantity.toFixed(2)} {item.unit}
+                      {item.analytics ? ` across ${item.analytics.jobCount} job${item.analytics.jobCount === 1 ? "" : "s"}` : ""}
+                    </small>
+                  </div>
+
+                  <div className="dashboard-status-stack">
+                    <span className="status-pill">
+                      On hand: {item.quantityOnHand} {item.unit}
+                    </span>
+                    <span className="status-pill">
+                      Reorder: {item.suggestedReorderQuantity.toFixed(2)} {item.unit}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </ListCard>
+
+        <ListCard title="Most Used Materials">
+          {materialAnalytics.length === 0 ? (
+            <p className="muted-text">No job-linked material usage yet.</p>
+          ) : (
+            <div className="dashboard-list">
+              {materialAnalytics.slice(0, 10).map((material) => (
+                <div className="dashboard-list-row" key={material.id}>
+                  <div>
+                    <strong>{material.itemName}</strong>
+                    <span>
+                      {material.category} • {material.material || "No material"} • {material.color || "No color"}
+                    </span>
+                    <small>
+                      {material.usageCount} usage log{material.usageCount === 1 ? "" : "s"} • {material.jobCount} job{material.jobCount === 1 ? "" : "s"} • Last used {formatDateTime(material.lastUsedAt)}
+                    </small>
+                  </div>
+
+                  <div className="dashboard-status-stack">
+                    <span className="status-pill">
+                      {material.totalQuantity.toFixed(2)} {material.unit}
+                    </span>
+                    <strong>{money(material.totalCost)}</strong>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </ListCard>
+
+        <ListCard title="Inventory Finalization">
+          {pendingInventoryJobs.length === 0 && completedInventoryWarningJobs.length === 0 ? (
+            <p className="muted-text">No jobs need inventory finalization review.</p>
+          ) : (
+            <div className="dashboard-list">
+              {[...completedInventoryWarningJobs, ...pendingInventoryJobs].slice(0, 10).map((job) => (
+                <div className="dashboard-list-row" key={job.id}>
+                  <div>
+                    <strong>{job.jobNumber} — {job.customerName || "No Customer"}</strong>
+                    <span>{job.jobName || "Untitled Job"}</span>
+                    <small>
+                      {getJobMaterialUsage(job).length} material usage log{getJobMaterialUsage(job).length === 1 ? "" : "s"} • {job.status || "Approved"}
+                    </small>
+                  </div>
+
+                  <span className="status-pill">
+                    {job.status === "Completed" ? "Completed not finalized" : "Pending finalization"}
+                  </span>
+                </div>
+              ))}
             </div>
           )}
         </ListCard>

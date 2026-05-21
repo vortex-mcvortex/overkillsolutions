@@ -6,6 +6,7 @@ import {
   Download,
   Edit,
   Eye,
+  EyeOff,
   PackagePlus,
   Plus,
   Save,
@@ -26,7 +27,7 @@ import {
   searchMaterialCatalog,
 } from "../data/materialCatalog";
 
-const RAW_STARTER_INVENTORY = ''
+const RAW_STARTER_INVENTORY = "";
 
 const CATEGORIES = [
   "Filament",
@@ -64,6 +65,17 @@ const ADJUSTMENT_TYPES = [
   "Estimated Job Usage",
   "Waste / Failed Print",
   "Correction",
+];
+
+const STOCK_FILTERS = [
+  "All",
+  "Active",
+  "Inactive",
+  "Low Stock",
+  "In Stock",
+  "Out of Stock",
+  "Catalog Linked",
+  "Needs Catalog Link",
 ];
 
 const EMPTY_ITEM = {
@@ -123,11 +135,25 @@ function clean(value) {
   return String(value || "").trim();
 }
 
+function isActiveItem(item) {
+  return item.active !== false;
+}
+
+function isOutOfStock(item) {
+  return isActiveItem(item) && num(item.quantityOnHand) <= 0;
+}
+
 function isLowStock(item) {
   return (
-    item.active !== false &&
+    isActiveItem(item) &&
+    num(item.reorderThreshold) > 0 &&
+    num(item.quantityOnHand) > 0 &&
     num(item.quantityOnHand) <= num(item.reorderThreshold)
   );
+}
+
+function isCatalogLinked(item) {
+  return Boolean(item.catalogId || item.bambuCode || item.hexCode);
 }
 
 function getInventoryValue(item) {
@@ -163,9 +189,11 @@ function matchesItem(item, searchTerm, categoryFilter, stockFilter) {
     stockFilter === "All" ||
     (stockFilter === "Low Stock" && isLowStock(item)) ||
     (stockFilter === "In Stock" && num(item.quantityOnHand) > 0) ||
-    (stockFilter === "Out of Stock" && num(item.quantityOnHand) <= 0) ||
+    (stockFilter === "Out of Stock" && isOutOfStock(item)) ||
     (stockFilter === "Inactive" && item.active === false) ||
-    (stockFilter === "Active" && item.active !== false);
+    (stockFilter === "Active" && item.active !== false) ||
+    (stockFilter === "Catalog Linked" && isCatalogLinked(item)) ||
+    (stockFilter === "Needs Catalog Link" && !isCatalogLinked(item));
 
   return searchMatches && categoryMatches && stockMatches;
 }
@@ -239,7 +267,6 @@ function parseQuantity(line) {
     cleanedLine: rawLine,
   };
 }
-
 function inferFallbackInventoryItem(rawLine) {
   const line = clean(rawLine);
 
@@ -559,6 +586,10 @@ export default function InventoryPage({
         matchesItem(item, searchTerm, categoryFilter, stockFilter)
       )
       .sort((a, b) => {
+        if (isOutOfStock(a) !== isOutOfStock(b)) {
+          return isOutOfStock(a) ? -1 : 1;
+        }
+
         if (isLowStock(a) !== isLowStock(b)) {
           return isLowStock(a) ? -1 : 1;
         }
@@ -594,14 +625,8 @@ export default function InventoryPage({
         else summary.active += 1;
 
         if (isLowStock(item)) summary.lowStock += 1;
-
-        if (num(item.quantityOnHand) <= 0) {
-          summary.outOfStock += 1;
-        }
-
-        if (item.catalogId || item.bambuCode || item.hexCode) {
-          summary.catalogLinked += 1;
-        }
+        if (isOutOfStock(item)) summary.outOfStock += 1;
+        if (isCatalogLinked(item)) summary.catalogLinked += 1;
 
         return summary;
       },
@@ -679,6 +704,18 @@ export default function InventoryPage({
   function collapseAllCatalogGroups() {
     setExpandedCatalogGroups({});
   }
+    function normalizeDraftForSave(draft) {
+    return {
+      ...draft,
+      quantityOnHand: num(draft.quantityOnHand),
+      reorderThreshold: num(draft.reorderThreshold),
+      unitCost: num(draft.unitCost),
+      msrp: num(draft.msrp),
+      bulkPrice: num(draft.bulkPrice),
+      spoolWeightGrams: num(draft.spoolWeightGrams),
+      active: draft.active !== false,
+    };
+  }
 
   function saveNewItem() {
     if (!itemDraft.name.trim()) {
@@ -686,17 +723,19 @@ export default function InventoryPage({
       return;
     }
 
-    onAddItem(itemDraft);
+    onAddItem(normalizeDraftForSave(itemDraft));
     setItemDraft(EMPTY_ITEM);
     setShowAddItem(false);
   }
 
   function addCatalogItemToInventory(catalogItem) {
+    const defaultQuantity = catalogItem.category === "Filament" ? "1000" : "1";
+
     const quantity = window.prompt(
       `How many ${catalogItem.unit || "units"} of ${getMaterialDisplayLabel(
         catalogItem
       )} do you currently have?`,
-      catalogItem.category === "Filament" ? "1" : "0"
+      defaultQuantity
     );
 
     if (quantity === null) return;
@@ -708,11 +747,16 @@ export default function InventoryPage({
       return;
     }
 
+    const existingQuantity = getOwnedQuantityForCatalog(inventoryItems, catalogItem);
+
     onAddItem(
       createInventoryItemFromCatalog(catalogItem, {
         quantityOnHand: parsedQuantity,
         priceMode,
-        notes: `Added from material catalog using ${priceMode.toUpperCase()} pricing.`,
+        notes:
+          existingQuantity > 0
+            ? `Duplicate catalog item added using ${priceMode.toUpperCase()} pricing.`
+            : `Added from material catalog using ${priceMode.toUpperCase()} pricing.`,
       })
     );
   }
@@ -783,7 +827,7 @@ export default function InventoryPage({
       return;
     }
 
-    onUpdateItem(itemId, editingDraft);
+    onUpdateItem(itemId, normalizeDraftForSave(editingDraft));
     cancelEditing();
   }
 
@@ -801,7 +845,11 @@ export default function InventoryPage({
       return;
     }
 
-    onAdjustItem(adjustmentDraft.itemId, adjustmentDraft);
+    onAdjustItem(adjustmentDraft.itemId, {
+      ...adjustmentDraft,
+      quantityChange: num(adjustmentDraft.quantityChange),
+    });
+
     setAdjustmentDraft(EMPTY_ADJUSTMENT);
   }
 
@@ -824,6 +872,52 @@ export default function InventoryPage({
       quantityChange: -Math.abs(num(quantity)),
       jobNumber: jobNumber || "",
       notes: notes || "Quick usage adjustment.",
+    });
+  }
+
+  function markItemEmpty(item) {
+    const currentQuantity = num(item.quantityOnHand);
+
+    if (currentQuantity <= 0) return;
+
+    const confirmed = window.confirm(
+      `Mark "${item.name}" as empty?\n\nThis will subtract ${currentQuantity} ${item.unit}.`
+    );
+
+    if (!confirmed) return;
+
+    onAdjustItem(item.id, {
+      type: "Stock Used",
+      quantityChange: -currentQuantity,
+      jobNumber: "",
+      notes: "Marked empty from inventory manager.",
+    });
+  }
+
+  function quickAddStock(item) {
+    const quantity = window.prompt(`How many ${item.unit} are you adding?`);
+
+    if (
+      quantity === null ||
+      quantity === "" ||
+      Number.isNaN(Number(quantity))
+    ) {
+      return;
+    }
+
+    const notes = window.prompt("Stock add notes? (Optional)");
+
+    onAdjustItem(item.id, {
+      type: "Stock Added",
+      quantityChange: Math.abs(num(quantity)),
+      jobNumber: "",
+      notes: notes || "Quick stock add.",
+    });
+  }
+
+  function toggleItemActive(item) {
+    onUpdateItem(item.id, {
+      active: item.active === false,
     });
   }
 
@@ -1044,6 +1138,13 @@ export default function InventoryPage({
             onChange={(value) => updateFn("bulkPrice", value)}
           />
 
+          <Field
+            label="Spool Weight Grams"
+            type="number"
+            value={draft.spoolWeightGrams || 0}
+            onChange={(value) => updateFn("spoolWeightGrams", value)}
+          />
+
           <label className="field checkbox-field">
             <input
               type="checkbox"
@@ -1202,8 +1303,7 @@ export default function InventoryPage({
       </div>
     );
   }
-
-  return (
+    return (
     <section className="page-panel">
       <div className="page-heading-row">
         <div>
@@ -1253,7 +1353,8 @@ export default function InventoryPage({
           </button>
         </div>
       </div>
-            <div className="job-queue-summary">
+
+      <div className="job-queue-summary">
         <div>
           <span>Owned Items</span>
           <strong>{stats.totalItems}</strong>
@@ -1304,6 +1405,20 @@ export default function InventoryPage({
           <strong>{inventoryLogs.length}</strong>
         </div>
       </div>
+
+      {(stats.lowStock > 0 || stats.outOfStock > 0) && (
+        <div className="warning-box single-row-gap">
+          <AlertTriangle size={18} />
+          <span>
+            {stats.outOfStock > 0
+              ? `${stats.outOfStock} item${stats.outOfStock === 1 ? "" : "s"} out of stock. `
+              : ""}
+            {stats.lowStock > 0
+              ? `${stats.lowStock} item${stats.lowStock === 1 ? "" : "s"} below reorder threshold.`
+              : ""}
+          </span>
+        </div>
+      )}
 
       <div className="form-card">
         <div className="page-heading-row">
@@ -1486,7 +1601,8 @@ export default function InventoryPage({
           </div>
         </div>
       )}
-            {showAddItem && (
+
+      {showAddItem && (
         <div className="form-card customer-create-card">
           <div className="page-heading-row">
             <div>
@@ -1557,12 +1673,11 @@ export default function InventoryPage({
             value={stockFilter}
             onChange={(event) => setStockFilter(event.target.value)}
           >
-            <option value="All">All Stock</option>
-            <option value="Active">Active</option>
-            <option value="Inactive">Inactive</option>
-            <option value="Low Stock">Low Stock</option>
-            <option value="In Stock">In Stock</option>
-            <option value="Out of Stock">Out of Stock</option>
+            {STOCK_FILTERS.map((filter) => (
+              <option key={filter} value={filter}>
+                {filter === "All" ? "All Stock" : filter}
+              </option>
+            ))}
           </select>
         </label>
 
@@ -1664,14 +1779,15 @@ export default function InventoryPage({
       <div className="inventory-grid single-row-gap">
         {filteredItems.map((item) => {
           const lowStock = isLowStock(item);
+          const outOfStock = isOutOfStock(item);
           const isEditing = editingItemId === item.id;
 
           return (
             <article
               key={item.id}
               className={`inventory-card ${
-                lowStock ? "inventory-low-stock" : ""
-              }`}
+                lowStock || outOfStock ? "inventory-low-stock" : ""
+              } ${item.active === false ? "inventory-inactive" : ""}`}
             >
               {isEditing ? (
                 <>
@@ -1723,6 +1839,17 @@ export default function InventoryPage({
                     <div className="dashboard-status-stack">
                       {item.catalogId && (
                         <span className="status-pill">Catalog Linked</span>
+                      )}
+
+                      {item.active === false && (
+                        <span className="status-pill">Inactive</span>
+                      )}
+
+                      {outOfStock && (
+                        <span className="status-pill">
+                          <AlertTriangle size={14} />
+                          Out of Stock
+                        </span>
                       )}
 
                       {lowStock && (
@@ -1798,6 +1925,43 @@ export default function InventoryPage({
                     </button>
 
                     <button
+                      className="secondary-button"
+                      type="button"
+                      onClick={() => quickAddStock(item)}
+                    >
+                      <PackagePlus size={18} />
+                      Add Stock
+                    </button>
+
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      onClick={() => markItemEmpty(item)}
+                      disabled={num(item.quantityOnHand) <= 0}
+                    >
+                      <AlertTriangle size={18} />
+                      Mark Empty
+                    </button>
+
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      onClick={() => toggleItemActive(item)}
+                    >
+                      {item.active === false ? (
+                        <>
+                          <Eye size={18} />
+                          Activate
+                        </>
+                      ) : (
+                        <>
+                          <EyeOff size={18} />
+                          Deactivate
+                        </>
+                      )}
+                    </button>
+
+                    <button
                       className="secondary-button danger-button"
                       type="button"
                       onClick={() => onDeleteItem(item.id)}
@@ -1812,7 +1976,8 @@ export default function InventoryPage({
           );
         })}
       </div>
-            <div className="form-card single-row-gap">
+
+      <div className="form-card single-row-gap">
         <h3 className="card-title">Inventory Logs</h3>
 
         <label className="search-field single-row-gap">
@@ -1850,6 +2015,10 @@ export default function InventoryPage({
               </div>
             </div>
           ))}
+
+          {filteredLogs.length === 0 && (
+            <div className="empty-state">No inventory logs match this search.</div>
+          )}
         </div>
       </div>
     </section>
