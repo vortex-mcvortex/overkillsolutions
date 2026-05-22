@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronRight,
+  Copy,
   Download,
   Edit,
   Eye,
@@ -11,8 +12,10 @@ import {
   Plus,
   Save,
   Search,
+  TrendingUp,
   Trash2,
   Upload,
+  RotateCcw,
   XCircle,
 } from "lucide-react";
 import {
@@ -76,6 +79,19 @@ const STOCK_FILTERS = [
   "Out of Stock",
   "Catalog Linked",
   "Needs Catalog Link",
+];
+
+const SORT_OPTIONS = [
+  { id: "status", label: "Status / Urgency" },
+  { id: "name", label: "Name A-Z" },
+  { id: "category", label: "Category" },
+  { id: "quantity-low", label: "Lowest Quantity" },
+  { id: "quantity-high", label: "Highest Quantity" },
+  { id: "value-high", label: "Highest Stock Value" },
+  { id: "usage-high", label: "Most Used" },
+  { id: "cost-high", label: "Highest Usage Cost" },
+  { id: "recent-use", label: "Recently Used" },
+  { id: "depletion", label: "Depletion Risk" },
 ];
 
 const EMPTY_ITEM = {
@@ -512,6 +528,159 @@ function groupCatalogItems(catalogItems, inventoryItems) {
   });
 }
 
+
+function getInventoryStatus(item) {
+  if (item.active === false) return { label: "Inactive", tone: "normal" };
+  if (isOutOfStock(item)) return { label: "Out of Stock", tone: "danger" };
+  if (isLowStock(item)) return { label: "Low Stock", tone: "warning" };
+  return { label: "In Stock", tone: "success" };
+}
+
+function getLogDate(log) {
+  const date = new Date(log.createdAt || 0);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function buildInventoryIntelligence(inventoryItems, inventoryLogs, jobs) {
+  const map = new Map();
+  const now = new Date();
+  const thirtyDaysAgo = new Date(now);
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+  inventoryItems.forEach((item) => {
+    map.set(item.id, {
+      itemId: item.id,
+      totalUsedQuantity: 0,
+      recentUsedQuantity: 0,
+      totalAddedQuantity: 0,
+      movementCount: 0,
+      usageCost: 0,
+      usageEventCount: 0,
+      jobNumbers: new Set(),
+      lastMovementAt: "",
+      lastUsedAt: "",
+      daysUntilEmpty: null,
+      averageUsagePerEvent: 0,
+      recommendedTarget: 0,
+      suggestedReorderQuantity: 0,
+    });
+  });
+
+  inventoryLogs.forEach((log) => {
+    if (!log.itemId || !map.has(log.itemId)) return;
+
+    const entry = map.get(log.itemId);
+    const quantityChange = num(log.quantityChange);
+    const logDate = getLogDate(log);
+
+    entry.movementCount += 1;
+
+    if (quantityChange < 0) {
+      const used = Math.abs(quantityChange);
+      entry.totalUsedQuantity += used;
+      entry.usageEventCount += 1;
+
+      if (logDate && logDate >= thirtyDaysAgo) {
+        entry.recentUsedQuantity += used;
+      }
+
+      if (!entry.lastUsedAt || new Date(log.createdAt || 0) > new Date(entry.lastUsedAt || 0)) {
+        entry.lastUsedAt = log.createdAt || "";
+      }
+    }
+
+    if (quantityChange > 0) {
+      entry.totalAddedQuantity += quantityChange;
+    }
+
+    if (log.jobNumber) entry.jobNumbers.add(log.jobNumber);
+
+    if (!entry.lastMovementAt || new Date(log.createdAt || 0) > new Date(entry.lastMovementAt || 0)) {
+      entry.lastMovementAt = log.createdAt || "";
+    }
+  });
+
+  jobs.forEach((job) => {
+    (job.materialUsageEvents || []).forEach((usage) => {
+      if (!usage.itemId || !map.has(usage.itemId)) return;
+
+      const entry = map.get(usage.itemId);
+      entry.usageCost += num(usage.estimatedCost);
+      entry.jobNumbers.add(job.jobNumber || job.id);
+    });
+  });
+
+  inventoryItems.forEach((item) => {
+    const entry = map.get(item.id);
+    const quantityOnHand = num(item.quantityOnHand);
+    const reorderThreshold = num(item.reorderThreshold);
+    const recentDailyUse = entry.recentUsedQuantity > 0 ? entry.recentUsedQuantity / 30 : 0;
+
+    entry.averageUsagePerEvent =
+      entry.usageEventCount > 0 ? entry.totalUsedQuantity / entry.usageEventCount : 0;
+
+    entry.daysUntilEmpty =
+      recentDailyUse > 0 && quantityOnHand > 0
+        ? Math.ceil(quantityOnHand / recentDailyUse)
+        : null;
+
+    const baseTarget = item.category === "Filament" ? 1000 : 1;
+    const reorderTarget = reorderThreshold > 0 ? reorderThreshold * 2 : baseTarget;
+    const usageTarget = entry.averageUsagePerEvent > 0 ? entry.averageUsagePerEvent * 3 : 0;
+
+    entry.recommendedTarget = Math.ceil(Math.max(reorderTarget, usageTarget, baseTarget));
+    entry.suggestedReorderQuantity = Math.max(0, entry.recommendedTarget - quantityOnHand);
+    entry.jobCount = entry.jobNumbers.size;
+    entry.jobNumbers = [...entry.jobNumbers];
+  });
+
+  return map;
+}
+
+function getSortValue(item, intelligence, sortMode) {
+  if (sortMode === "quantity-low") return num(item.quantityOnHand);
+  if (sortMode === "quantity-high") return -num(item.quantityOnHand);
+  if (sortMode === "value-high") return -getInventoryValue(item);
+  if (sortMode === "usage-high") return -(intelligence?.totalUsedQuantity || 0);
+  if (sortMode === "cost-high") return -(intelligence?.usageCost || 0);
+  if (sortMode === "recent-use") {
+    const date = new Date(intelligence?.lastUsedAt || intelligence?.lastMovementAt || 0);
+    return Number.isNaN(date.getTime()) ? Infinity : -date.getTime();
+  }
+  if (sortMode === "depletion") {
+    return intelligence?.daysUntilEmpty === null ? Infinity : intelligence.daysUntilEmpty;
+  }
+  return 0;
+}
+
+function compareInventoryItems(a, b, sortMode, intelligenceById) {
+  const aStatus = getInventoryStatus(a);
+  const bStatus = getInventoryStatus(b);
+  const urgencyRank = { danger: 4, warning: 3, success: 2, normal: 1 };
+
+  if (sortMode === "status") {
+    const urgencyDifference = urgencyRank[bStatus.tone] - urgencyRank[aStatus.tone];
+    if (urgencyDifference !== 0) return urgencyDifference;
+  }
+
+  if (sortMode !== "status" && sortMode !== "name" && sortMode !== "category") {
+    const aValue = getSortValue(a, intelligenceById.get(a.id), sortMode);
+    const bValue = getSortValue(b, intelligenceById.get(b.id), sortMode);
+    if (aValue !== bValue) return aValue - bValue;
+  }
+
+  if (sortMode === "category") {
+    return (
+      String(a.category || "").localeCompare(String(b.category || "")) ||
+      String(a.material || "").localeCompare(String(b.material || "")) ||
+      String(a.color || "").localeCompare(String(b.color || "")) ||
+      String(a.name || "").localeCompare(String(b.name || ""))
+    );
+  }
+
+  return String(a.name || "").localeCompare(String(b.name || ""));
+}
+
 function Field({
   label,
   value,
@@ -545,6 +714,8 @@ export default function InventoryPage({
   const [logSearchTerm, setLogSearchTerm] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("All");
   const [stockFilter, setStockFilter] = useState("All");
+  const [sortMode, setSortMode] = useState("status");
+  const [showInventoryIntelligence, setShowInventoryIntelligence] = useState(true);
 
   const [catalogSearch, setCatalogSearch] = useState("");
   const [catalogCategoryFilter, setCatalogCategoryFilter] = useState("All");
@@ -580,28 +751,57 @@ export default function InventoryPage({
     return groupCatalogItems(filteredCatalogItems, inventoryItems);
   }, [filteredCatalogItems, inventoryItems]);
 
+  const inventoryIntelligenceById = useMemo(() => {
+    return buildInventoryIntelligence(inventoryItems, inventoryLogs, jobs);
+  }, [inventoryItems, inventoryLogs, jobs]);
+
+  const inventoryRecommendations = useMemo(() => {
+    return inventoryItems
+      .filter((item) => item.active !== false)
+      .map((item) => ({
+        item,
+        intelligence: inventoryIntelligenceById.get(item.id),
+        status: getInventoryStatus(item),
+      }))
+      .filter(({ item, intelligence, status }) => {
+        return (
+          status.tone === "danger" ||
+          status.tone === "warning" ||
+          num(intelligence?.suggestedReorderQuantity) > 0
+        );
+      })
+      .sort((a, b) => {
+        const urgencyRank = { danger: 3, warning: 2, success: 1, normal: 0 };
+        const urgencyDifference = urgencyRank[b.status.tone] - urgencyRank[a.status.tone];
+        if (urgencyDifference !== 0) return urgencyDifference;
+
+        return num(b.intelligence?.suggestedReorderQuantity) - num(a.intelligence?.suggestedReorderQuantity);
+      })
+      .slice(0, 10);
+  }, [inventoryItems, inventoryIntelligenceById]);
+
+  const mostUsedItems = useMemo(() => {
+    return inventoryItems
+      .map((item) => ({
+        item,
+        intelligence: inventoryIntelligenceById.get(item.id),
+      }))
+      .filter(({ intelligence }) => num(intelligence?.totalUsedQuantity) > 0 || num(intelligence?.usageCost) > 0)
+      .sort((a, b) => {
+        const costDifference = num(b.intelligence?.usageCost) - num(a.intelligence?.usageCost);
+        if (costDifference !== 0) return costDifference;
+        return num(b.intelligence?.totalUsedQuantity) - num(a.intelligence?.totalUsedQuantity);
+      })
+      .slice(0, 10);
+  }, [inventoryItems, inventoryIntelligenceById]);
+
   const filteredItems = useMemo(() => {
     return inventoryItems
       .filter((item) =>
         matchesItem(item, searchTerm, categoryFilter, stockFilter)
       )
-      .sort((a, b) => {
-        if (isOutOfStock(a) !== isOutOfStock(b)) {
-          return isOutOfStock(a) ? -1 : 1;
-        }
-
-        if (isLowStock(a) !== isLowStock(b)) {
-          return isLowStock(a) ? -1 : 1;
-        }
-
-        return (
-          String(a.category || "").localeCompare(String(b.category || "")) ||
-          String(a.material || "").localeCompare(String(b.material || "")) ||
-          String(a.color || "").localeCompare(String(b.color || "")) ||
-          String(a.name || "").localeCompare(String(b.name || ""))
-        );
-      });
-  }, [inventoryItems, searchTerm, categoryFilter, stockFilter]);
+      .sort((a, b) => compareInventoryItems(a, b, sortMode, inventoryIntelligenceById));
+  }, [inventoryItems, searchTerm, categoryFilter, stockFilter, sortMode, inventoryIntelligenceById]);
 
   const filteredLogs = useMemo(() => {
     return inventoryLogs
@@ -641,6 +841,32 @@ export default function InventoryPage({
       }
     );
   }, [inventoryItems]);
+
+  const intelligenceStats = useMemo(() => {
+    let totalUsedQuantity = 0;
+    let totalUsageCost = 0;
+    let itemsWithUsage = 0;
+    let depletionRisk = 0;
+
+    inventoryItems.forEach((item) => {
+      const intelligence = inventoryIntelligenceById.get(item.id);
+      totalUsedQuantity += num(intelligence?.totalUsedQuantity);
+      totalUsageCost += num(intelligence?.usageCost);
+
+      if (num(intelligence?.totalUsedQuantity) > 0) itemsWithUsage += 1;
+      if (intelligence?.daysUntilEmpty !== null && intelligence?.daysUntilEmpty <= 14) {
+        depletionRisk += 1;
+      }
+    });
+
+    return {
+      totalUsedQuantity,
+      totalUsageCost,
+      itemsWithUsage,
+      depletionRisk,
+      recommendations: inventoryRecommendations.length,
+    };
+  }, [inventoryItems, inventoryIntelligenceById, inventoryRecommendations.length]);
 
   function updatePriceMode(nextMode) {
     setPriceMode(nextMode);
@@ -912,6 +1138,47 @@ export default function InventoryPage({
       quantityChange: Math.abs(num(quantity)),
       jobNumber: "",
       notes: notes || "Quick stock add.",
+    });
+  }
+
+  function duplicateInventoryItem(item) {
+    const confirmed = window.confirm(
+      `Duplicate "${item.name}" as a new inventory item?`
+    );
+
+    if (!confirmed) return;
+
+    onAddItem({
+      ...item,
+      id: undefined,
+      name: `${item.name} Copy`,
+      quantityOnHand: num(item.quantityOnHand),
+      notes: item.notes
+        ? `${item.notes}\nDuplicated from existing inventory item.`
+        : "Duplicated from existing inventory item.",
+    });
+  }
+
+  function restockToRecommendation(item) {
+    const intelligence = inventoryIntelligenceById.get(item.id);
+    const suggestedQuantity = Math.ceil(num(intelligence?.suggestedReorderQuantity));
+
+    if (suggestedQuantity <= 0) {
+      window.alert("This item does not currently need a suggested restock.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Add ${suggestedQuantity} ${item.unit} to "${item.name}" based on the reorder recommendation?`
+    );
+
+    if (!confirmed) return;
+
+    onAdjustItem(item.id, {
+      type: "Stock Added",
+      quantityChange: suggestedQuantity,
+      jobNumber: "",
+      notes: "Restocked to recommended target from inventory intelligence panel.",
     });
   }
 
@@ -1404,6 +1671,21 @@ export default function InventoryPage({
           <span>Logs</span>
           <strong>{inventoryLogs.length}</strong>
         </div>
+
+        <div>
+          <span>Used Items</span>
+          <strong>{intelligenceStats.itemsWithUsage}</strong>
+        </div>
+
+        <div>
+          <span>Usage Cost</span>
+          <strong>{money(intelligenceStats.totalUsageCost)}</strong>
+        </div>
+
+        <div>
+          <span>Depletion Risk</span>
+          <strong>{intelligenceStats.depletionRisk}</strong>
+        </div>
       </div>
 
       {(stats.lowStock > 0 || stats.outOfStock > 0) && (
@@ -1419,6 +1701,116 @@ export default function InventoryPage({
           </span>
         </div>
       )}
+
+      <div className="form-card single-row-gap">
+        <div className="page-heading-row">
+          <div>
+            <h3 className="card-title">Inventory Intelligence</h3>
+            <p className="muted-text">
+              Usage history, depletion estimates, reorder suggestions, and material cost signals.
+            </p>
+          </div>
+
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => setShowInventoryIntelligence(!showInventoryIntelligence)}
+          >
+            <TrendingUp size={18} />
+            {showInventoryIntelligence ? "Hide Intelligence" : "Show Intelligence"}
+          </button>
+        </div>
+
+        {showInventoryIntelligence && (
+          <>
+            <div className="job-summary-grid">
+              <div>
+                <span>Items With Usage</span>
+                <strong>{intelligenceStats.itemsWithUsage}</strong>
+              </div>
+
+              <div>
+                <span>Total Used Qty</span>
+                <strong>{intelligenceStats.totalUsedQuantity.toFixed(2)}</strong>
+              </div>
+
+              <div>
+                <span>Tracked Usage Cost</span>
+                <strong>{money(intelligenceStats.totalUsageCost)}</strong>
+              </div>
+
+              <div>
+                <span>Reorder Suggestions</span>
+                <strong>{inventoryRecommendations.length}</strong>
+              </div>
+            </div>
+
+            <div className="inventory-intelligence-grid single-row-gap">
+              <div className="form-card">
+                <h3 className="card-title">Reorder Recommendations</h3>
+
+                {inventoryRecommendations.length === 0 ? (
+                  <p className="muted-text">No reorder recommendations right now.</p>
+                ) : (
+                  <div className="dashboard-list">
+                    {inventoryRecommendations.map(({ item, intelligence, status }) => (
+                      <div className={`dashboard-list-row attention-${status.tone}`} key={item.id}>
+                        <div>
+                          <strong>{renderColorSwatch(item.hexCode)}{item.name}</strong>
+                          <span>
+                            {item.quantityOnHand} {item.unit} on hand • target {intelligence?.recommendedTarget || 0} {item.unit}
+                          </span>
+                          <small>
+                            Used {num(intelligence?.totalUsedQuantity).toFixed(2)} {item.unit} • {intelligence?.jobCount || 0} linked job{intelligence?.jobCount === 1 ? "" : "s"}
+                          </small>
+                        </div>
+
+                        <div className="dashboard-status-stack">
+                          <span className="status-pill">{status.label}</span>
+                          <button
+                            className="secondary-button"
+                            type="button"
+                            onClick={() => restockToRecommendation(item)}
+                          >
+                            <RotateCcw size={14} />
+                            Add {Math.ceil(num(intelligence?.suggestedReorderQuantity))} {item.unit}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="form-card">
+                <h3 className="card-title">Most Used Materials</h3>
+
+                {mostUsedItems.length === 0 ? (
+                  <p className="muted-text">No usage history yet.</p>
+                ) : (
+                  <div className="dashboard-list">
+                    {mostUsedItems.map(({ item, intelligence }) => (
+                      <div className="dashboard-list-row" key={item.id}>
+                        <div>
+                          <strong>{renderColorSwatch(item.hexCode)}{item.name}</strong>
+                          <span>
+                            {num(intelligence?.totalUsedQuantity).toFixed(2)} {item.unit} used • {money(intelligence?.usageCost)} cost
+                          </span>
+                          <small>
+                            Last used {formatDateTime(intelligence?.lastUsedAt)} • {intelligence?.jobCount || 0} job{intelligence?.jobCount === 1 ? "" : "s"}
+                          </small>
+                        </div>
+
+                        <span className="status-pill">{num(intelligence?.usageEventCount)} movements</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
 
       <div className="form-card">
         <div className="page-heading-row">
@@ -1681,6 +2073,21 @@ export default function InventoryPage({
           </select>
         </label>
 
+        <label className="filter-select-field">
+          <span>Sort</span>
+
+          <select
+            value={sortMode}
+            onChange={(event) => setSortMode(event.target.value)}
+          >
+            {SORT_OPTIONS.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
         <div className="filter-count-pill">
           Showing {filteredItems.length} of {inventoryItems.length}
         </div>
@@ -1781,6 +2188,8 @@ export default function InventoryPage({
           const lowStock = isLowStock(item);
           const outOfStock = isOutOfStock(item);
           const isEditing = editingItemId === item.id;
+          const intelligence = inventoryIntelligenceById.get(item.id);
+          const inventoryStatus = getInventoryStatus(item);
 
           return (
             <article
@@ -1837,6 +2246,16 @@ export default function InventoryPage({
                     </div>
 
                     <div className="dashboard-status-stack">
+                      <span className={`status-pill inventory-status-${inventoryStatus.tone}`}>
+                        {inventoryStatus.label}
+                      </span>
+
+                      {intelligence?.daysUntilEmpty !== null && (
+                        <span className="status-pill">
+                          ~{intelligence.daysUntilEmpty} days left
+                        </span>
+                      )}
+
                       {item.catalogId && (
                         <span className="status-pill">Catalog Linked</span>
                       )}
@@ -1903,6 +2322,28 @@ export default function InventoryPage({
                     </div>
                   </div>
 
+                  <div className="record-details inventory-intelligence-details">
+                    <div>
+                      <span>Total Used</span>
+                      <strong>{num(intelligence?.totalUsedQuantity).toFixed(2)} {item.unit}</strong>
+                    </div>
+
+                    <div>
+                      <span>Usage Cost</span>
+                      <strong>{money(intelligence?.usageCost)}</strong>
+                    </div>
+
+                    <div>
+                      <span>Linked Jobs</span>
+                      <strong>{intelligence?.jobCount || 0}</strong>
+                    </div>
+
+                    <div>
+                      <span>Suggested Reorder</span>
+                      <strong>{Math.ceil(num(intelligence?.suggestedReorderQuantity))} {item.unit}</strong>
+                    </div>
+                  </div>
+
                   {item.notes && <p className="helper-note">{item.notes}</p>}
 
                   <div className="record-button-row quote-button-row">
@@ -1959,6 +2400,25 @@ export default function InventoryPage({
                           Deactivate
                         </>
                       )}
+                    </button>
+
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      onClick={() => duplicateInventoryItem(item)}
+                    >
+                      <Copy size={18} />
+                      Duplicate
+                    </button>
+
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      onClick={() => restockToRecommendation(item)}
+                      disabled={num(intelligence?.suggestedReorderQuantity) <= 0}
+                    >
+                      <RotateCcw size={18} />
+                      Restock Target
                     </button>
 
                     <button

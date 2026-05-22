@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   LayoutDashboard,
   Calculator,
@@ -11,6 +11,10 @@ import {
   Download,
   Upload,
   PackageSearch,
+  Search,
+  XCircle,
+  DollarSign,
+  CalendarDays,
 } from "lucide-react";
 
 import CalculatorPage from "./components/CalculatorPage";
@@ -22,6 +26,8 @@ import SettingsPage from "./components/SettingsPage";
 import CustomersPage from "./components/CustomersPage";
 import ShippingPage from "./components/ShippingPage";
 import InventoryPage from "./components/InventoryPage";
+import ExpensesPage from "./components/ExpensesPage";
+import SchedulePage from "./components/SchedulePage";
 import { importOverkillPdf } from "./utils/pdfImport";
 
 import overkillLogo from "./assets/logos/overkill_main.png";
@@ -34,7 +40,9 @@ const NAV_ITEMS = [
   { id: "calculator", label: "Calculator", icon: Calculator },
   { id: "quotes", label: "Quotes", icon: FileText },
   { id: "jobs", label: "Jobs", icon: Hammer },
+  { id: "schedule", label: "Schedule", icon: CalendarDays },
   { id: "payments", label: "Payments", icon: CreditCard },
+  { id: "expenses", label: "Expenses", icon: DollarSign },
   { id: "customers", label: "Customers", icon: Users },
   { id: "shipping", label: "Shipping", icon: Truck },
   { id: "inventory", label: "Inventory", icon: PackageSearch },
@@ -49,9 +57,23 @@ const BACKUP_KEYS = {
   manualCustomers: "overkill_manual_customers",
   inventoryItems: "overkill_inventory_items",
   inventoryLogs: "overkill_inventory_logs",
+  expenses: "overkill_expenses",
+  suppliers: "overkill_suppliers",
   usedRecordNumbers: "overkill_used_record_numbers",
   settings: "overkill_settings",
 };
+
+const SEARCH_GROUPS = {
+  quotes: "Quotes",
+  jobs: "Jobs",
+  payments: "Payments",
+  customers: "Customers",
+  shipping: "Shipping",
+  inventory: "Inventory",
+  expenses: "Expenses",
+  suppliers: "Suppliers",
+};
+
 
 function money(value) {
   return Number(value || 0).toLocaleString("en-US", {
@@ -149,6 +171,446 @@ function applyShippingToRecord(record, shippingEstimate) {
   };
 }
 
+
+function makeSearchText(parts) {
+  return parts
+    .filter(Boolean)
+    .map((part) => String(part).toLowerCase())
+    .join(" ");
+}
+
+function getCustomerKey(record) {
+  const email = String(record.customerEmail || "").trim().toLowerCase();
+  const phone = String(record.customerPhone || "").trim().toLowerCase();
+  const name = String(record.customerName || "").trim().toLowerCase();
+
+  if (email) return `email:${email}`;
+  if (phone) return `phone:${phone}`;
+  if (name) return `name:${name}`;
+
+  return "";
+}
+
+function getPaymentStatus(job) {
+  const total = num(job.finalTotal);
+
+  const paid = (job.paymentEvents || []).reduce((sum, payment) => {
+    if (payment.type === "Refund") return sum - num(payment.amount);
+    return sum + num(payment.amount);
+  }, 0);
+
+  if (paid <= 0) return "Unpaid";
+  if (paid >= total) return paid > total ? "Overpaid" : "Paid";
+
+  return "Partially Paid";
+}
+
+function buildCustomerSearchRecords(quotes, jobs, manualCustomers, customerOverrides) {
+  const customerMap = new Map();
+
+  manualCustomers.forEach((customer) => {
+    const key = customer.key || `manual:${customer.id}`;
+
+    customerMap.set(key, {
+      key,
+      name: customer.name || "Manual Customer",
+      phone: customer.phone || "",
+      email: customer.email || "",
+      address: customer.address || "",
+      notes: customer.notes || "",
+      tags: customer.tags || "",
+      source: "Manual",
+      quoteCount: 0,
+      jobCount: 0,
+      totalValue: 0,
+    });
+  });
+
+  [...quotes, ...jobs].forEach((record) => {
+    const key = getCustomerKey(record);
+    if (!key) return;
+
+    const existing = customerMap.get(key) || {
+      key,
+      name: record.customerName || "Customer",
+      phone: record.customerPhone || "",
+      email: record.customerEmail || "",
+      address: record.customerAddress || "",
+      notes: "",
+      tags: "",
+      source: "Records",
+      quoteCount: 0,
+      jobCount: 0,
+      totalValue: 0,
+    };
+
+    existing.name = existing.name || record.customerName || "Customer";
+    existing.phone = existing.phone || record.customerPhone || "";
+    existing.email = existing.email || record.customerEmail || "";
+    existing.address = existing.address || record.customerAddress || "";
+
+    if (record.jobNumber) {
+      existing.jobCount += 1;
+    } else if (record.quoteNumber) {
+      existing.quoteCount += 1;
+    }
+
+    existing.totalValue += num(record.finalTotal);
+
+    customerMap.set(key, existing);
+  });
+
+  Object.entries(customerOverrides || {}).forEach(([key, override]) => {
+    const existing = customerMap.get(key) || {
+      key,
+      name: "Customer",
+      phone: "",
+      email: "",
+      address: "",
+      notes: "",
+      tags: "",
+      source: "Override",
+      quoteCount: 0,
+      jobCount: 0,
+      totalValue: 0,
+    };
+
+    customerMap.set(key, {
+      ...existing,
+      ...override,
+      key,
+    });
+  });
+
+  return [...customerMap.values()];
+}
+
+function buildGlobalSearchIndex({
+  quotes,
+  jobs,
+  shippingEstimates,
+  inventoryItems,
+  inventoryLogs,
+  expenses = [],
+  suppliers = [],
+  manualCustomers,
+  customerOverrides,
+}) {
+  const results = [];
+  const customers = buildCustomerSearchRecords(
+    quotes,
+    jobs,
+    manualCustomers,
+    customerOverrides
+  );
+
+  quotes.forEach((quote) => {
+    results.push({
+      id: `quote-${quote.id}`,
+      group: "quotes",
+      page: "quotes",
+      title: `${quote.quoteNumber || "Quote"} — ${quote.customerName || "No Customer"}`,
+      detail: `${quote.jobName || "Untitled Quote"} • ${quote.quoteStatus || quote.status || "Draft Quote"} • ${money(quote.finalTotal)}`,
+      status: quote.quoteStatus || quote.status || "Draft Quote",
+      searchText: makeSearchText([
+        quote.quoteNumber,
+        quote.customerName,
+        quote.customerPhone,
+        quote.customerEmail,
+        quote.customerAddress,
+        quote.jobName,
+        quote.quoteStatus,
+        quote.status,
+        quote.finalTotal,
+        quote.formData?.notes,
+        quote.notes,
+      ]),
+    });
+  });
+
+  jobs.forEach((job) => {
+    results.push({
+      id: `job-${job.id}`,
+      group: "jobs",
+      page: "jobs",
+      title: `${job.jobNumber || "Job"} — ${job.customerName || "No Customer"}`,
+      detail: `${job.jobName || "Untitled Job"} • ${job.status || "Approved"} • ${money(job.finalTotal)}`,
+      status: job.status || "Approved",
+      searchText: makeSearchText([
+        job.jobNumber,
+        job.quoteNumber,
+        job.invoiceNumber,
+        job.customerName,
+        job.customerPhone,
+        job.customerEmail,
+        job.customerAddress,
+        job.jobName,
+        job.status,
+        job.queueNotes,
+        job.scheduleStart,
+        job.scheduleEnd,
+        job.scheduleMachine,
+        job.scheduleOperator,
+        job.scheduleStatus,
+        job.scheduleNotes,
+        job.estimatedScheduleHours,
+        job.finalTotal,
+        ...(job.attachments || []).flatMap((attachment) => [
+          attachment.name,
+          attachment.type,
+          attachment.url,
+          attachment.notes,
+        ]),
+        ...(job.materialUsageEvents || []).flatMap((usage) => [
+          usage.itemName,
+          usage.material,
+          usage.color,
+          usage.usageType,
+          usage.notes,
+        ]),
+      ]),
+    });
+
+    (job.paymentEvents || []).forEach((payment) => {
+      results.push({
+        id: `payment-${job.id}-${payment.id}`,
+        group: "payments",
+        page: "payments",
+        selectedPaymentJobId: job.id,
+        title: `${payment.type || "Payment"} — ${job.jobNumber || "Job"}`,
+        detail: `${money(payment.amount)} via ${payment.method || "Unknown"} • ${job.customerName || "No Customer"} • ${getPaymentStatus(job)}`,
+        status: getPaymentStatus(job),
+        searchText: makeSearchText([
+          job.jobNumber,
+          job.customerName,
+          payment.type,
+          payment.method,
+          payment.amount,
+          payment.date,
+          payment.time,
+          payment.notes,
+        ]),
+      });
+    });
+  });
+
+  customers.forEach((customer) => {
+    results.push({
+      id: `customer-${customer.key}`,
+      group: "customers",
+      page: "customers",
+      title: customer.name || "Customer",
+      detail: `${customer.phone || "No phone"} • ${customer.email || "No email"} • ${customer.quoteCount} quotes • ${customer.jobCount} jobs`,
+      status: customer.source || "Customer",
+      searchText: makeSearchText([
+        customer.name,
+        customer.phone,
+        customer.email,
+        customer.address,
+        customer.notes,
+        customer.tags,
+        customer.quoteCount,
+        customer.jobCount,
+        customer.totalValue,
+      ]),
+    });
+  });
+
+  shippingEstimates.forEach((estimate) => {
+    results.push({
+      id: `shipping-${estimate.id}`,
+      group: "shipping",
+      page: "shipping",
+      title: `${estimate.estimateNumber || "Shipping"} — ${estimate.customerName || "No Customer"}`,
+      detail: `${estimate.carrier || "Carrier"} • ${estimate.service || "Service"} • ${money(estimate.total)}`,
+      status: estimate.status || estimate.shipmentStatus || "Estimate",
+      searchText: makeSearchText([
+        estimate.estimateNumber,
+        estimate.customerName,
+        estimate.customerPhone,
+        estimate.customerEmail,
+        estimate.carrier,
+        estimate.service,
+        estimate.trackingNumber,
+        estimate.destinationState,
+        estimate.notes,
+        estimate.total,
+      ]),
+    });
+  });
+
+  inventoryItems.forEach((item) => {
+    const quantity = num(item.quantityOnHand);
+    const threshold = num(item.reorderThreshold);
+
+    let status = "In Stock";
+    if (quantity <= 0) status = "Out of Stock";
+    else if (threshold > 0 && quantity <= threshold) status = "Low Stock";
+
+    results.push({
+      id: `inventory-${item.id}`,
+      group: "inventory",
+      page: "inventory",
+      title: item.name || "Inventory Item",
+      detail: `${item.category || "Inventory"} • ${item.material || "No material"} • ${item.color || "No color"} • ${quantity} ${item.unit || ""}`,
+      status,
+      searchText: makeSearchText([
+        item.name,
+        item.category,
+        item.material,
+        item.color,
+        item.brand,
+        item.location,
+        item.vendor,
+        item.sku,
+        item.bambuCode,
+        item.hexCode,
+        item.notes,
+      ]),
+    });
+  });
+
+  inventoryLogs.forEach((log) => {
+    results.push({
+      id: `inventory-log-${log.id}`,
+      group: "inventory",
+      page: "inventory",
+      title: `${log.type || "Inventory"} — ${log.itemName || "Item"}`,
+      detail: `${num(log.quantityChange) > 0 ? "+" : ""}${log.quantityChange} ${log.unit || ""} → ${log.quantityAfter} ${log.unit || ""}${log.jobNumber ? ` • ${log.jobNumber}` : ""}`,
+      status: log.jobNumber || "Inventory",
+      searchText: makeSearchText([
+        log.itemName,
+        log.type,
+        log.jobNumber,
+        log.notes,
+        log.quantityChange,
+        log.quantityAfter,
+      ]),
+    });
+  });
+
+
+  expenses.forEach((expense) => {
+    results.push({
+      id: `expense-${expense.id}`,
+      group: "expenses",
+      page: "expenses",
+      title: `${expense.expenseNumber || "EXP"} — ${expense.vendor || expense.name || "Expense"}`,
+      detail: `${expense.category || "Expense"} • ${money(expense.amount)} • ${expense.status || "Logged"}`,
+      status: expense.status || "Logged",
+      searchText: makeSearchText([
+        expense.expenseNumber,
+        expense.name,
+        expense.vendor,
+        expense.category,
+        expense.subcategory,
+        expense.paymentMethod,
+        expense.status,
+        expense.relatedJobNumber,
+        expense.notes,
+        expense.amount,
+        expense.date,
+      ]),
+    });
+  });
+
+  suppliers.forEach((supplier) => {
+    results.push({
+      id: `supplier-${supplier.id}`,
+      group: "suppliers",
+      page: "expenses",
+      title: supplier.name || "Supplier",
+      detail: `${supplier.category || "Supplier"} • ${supplier.website || "No website"} • ${supplier.preferred ? "Preferred" : "Standard"}`,
+      status: supplier.preferred ? "Preferred" : "Supplier",
+      searchText: makeSearchText([
+        supplier.name,
+        supplier.category,
+        supplier.contactName,
+        supplier.email,
+        supplier.phone,
+        supplier.website,
+        supplier.notes,
+      ]),
+    });
+  });
+
+  return results;
+}
+
+function groupSearchResults(results) {
+  return results.reduce((groups, result) => {
+    if (!groups[result.group]) groups[result.group] = [];
+    groups[result.group].push(result);
+    return groups;
+  }, {});
+}
+
+
+function getAppEventDateTime(event) {
+  if (!event?.date || !event?.time) return null;
+  const value = new Date(`${event.date}T${event.time}`);
+  return Number.isNaN(value.getTime()) ? null : value;
+}
+
+function getAppOpenTimers(events = []) {
+  const sorted = [...events].sort((a, b) => {
+    const aDate = getAppEventDateTime(a);
+    const bDate = getAppEventDateTime(b);
+    if (!aDate && !bDate) return 0;
+    if (!aDate) return 1;
+    if (!bDate) return -1;
+    return aDate - bDate;
+  });
+
+  const openStarts = {};
+
+  sorted.forEach((event) => {
+    if (event.action === "Note") return;
+    const key = `${event.type || "Other"}__${event.label || "General"}`;
+    if (event.action === "Started") openStarts[key] = event;
+    if (event.action === "Stopped" && openStarts[key]) delete openStarts[key];
+  });
+
+  return Object.entries(openStarts).map(([key, event]) => ({
+    key,
+    event,
+    type: event.type || "Other",
+    label: event.label || "General",
+  }));
+}
+
+function getAppTimerElapsedHours(event) {
+  const startedAt = getAppEventDateTime(event);
+  if (!startedAt) return 0;
+  const diffMs = Date.now() - startedAt.getTime();
+  if (diffMs <= 0) return 0;
+  return diffMs / 1000 / 60 / 60;
+}
+
+function formatAppDuration(hoursValue) {
+  const totalMinutes = Math.max(0, Math.round(num(hoursValue) * 60));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours <= 0) return `${minutes}m`;
+  return `${hours}h ${String(minutes).padStart(2, "0")}m`;
+}
+
+function createAppStopEvent(timer, job) {
+  return {
+    id: crypto.randomUUID(),
+    type: timer.event.type,
+    action: "Stopped",
+    label: timer.event.label || "",
+    date: new Date().toISOString().slice(0, 10),
+    time: new Date().toTimeString().slice(0, 5),
+    rate: timer.event.rate || 0,
+    notes: `Timer stopped from global dock for ${timer.event.type}${timer.event.label ? ` — ${timer.event.label}` : ""}.`,
+    operator: timer.event.operator || job.operator || "",
+    createdByTimer: true,
+    timerSessionId: timer.event.timerSessionId || crypto.randomUUID(),
+  };
+}
+
 export default function App() {
   const backupInputRef = useRef(null);
 
@@ -170,6 +632,12 @@ export default function App() {
   const [inventoryLogs, setInventoryLogs] = useState(() =>
     getInitialState("overkill_inventory_logs", [])
   );
+  const [expenses, setExpenses] = useState(() =>
+    getInitialState("overkill_expenses", [])
+  );
+  const [suppliers, setSuppliers] = useState(() =>
+    getInitialState("overkill_suppliers", [])
+  );
   const [usedRecordNumbers, setUsedRecordNumbers] = useState(() =>
     getInitialState("overkill_used_record_numbers", [])
   );
@@ -177,8 +645,92 @@ export default function App() {
   const [editingQuoteId, setEditingQuoteId] = useState(null);
   const [importMessage, setImportMessage] = useState("");
   const [backupMessage, setBackupMessage] = useState("");
+  const [timerTick, setTimerTick] = useState(0);
+  const [globalSearch, setGlobalSearch] = useState("");
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
 
   const editingQuote = quotes.find((quote) => quote.id === editingQuoteId) || null;
+
+  const globalOpenTimers = useMemo(() => {
+    return jobs
+      .filter((job) => !job.archived)
+      .flatMap((job) =>
+        getAppOpenTimers(job.timeEvents || []).map((timer) => ({
+          ...timer,
+          job,
+          elapsedHours: getAppTimerElapsedHours(timer.event),
+          liveCost: getAppTimerElapsedHours(timer.event) * num(timer.event.rate),
+        }))
+      );
+  }, [jobs, timerTick]);
+
+  const globalTimerTotals = useMemo(() => {
+    return globalOpenTimers.reduce(
+      (summary, timer) => {
+        summary.hours += timer.elapsedHours;
+        summary.cost += timer.liveCost;
+        return summary;
+      },
+      { hours: 0, cost: 0 }
+    );
+  }, [globalOpenTimers]);
+
+  useEffect(() => {
+    if (globalOpenTimers.length === 0) return undefined;
+
+    const intervalId = window.setInterval(() => {
+      setTimerTick((current) => current + 1);
+    }, 30000);
+
+    return () => window.clearInterval(intervalId);
+  }, [globalOpenTimers.length]);
+
+  function stopGlobalTimer(jobId, timerKey) {
+    const job = jobs.find((item) => item.id === jobId);
+    if (!job) return;
+
+    const timer = getAppOpenTimers(job.timeEvents || []).find((item) => item.key === timerKey);
+    if (!timer) return;
+
+    const stopEvent = createAppStopEvent(timer, job);
+    const nextJobs = jobs.map((item) =>
+      item.id === jobId
+        ? {
+            ...item,
+            timeEvents: [...(item.timeEvents || []), stopEvent],
+            updatedAt: new Date().toISOString(),
+          }
+        : item
+    );
+
+    setJobs(nextJobs);
+    saveToStorage(quotes, nextJobs, usedRecordNumbers);
+  }
+
+  function stopAllGlobalTimers() {
+    if (globalOpenTimers.length === 0) return;
+
+    const confirmed = window.confirm(`Stop all ${globalOpenTimers.length} active production timer(s)?`);
+    if (!confirmed) return;
+
+    const now = new Date().toISOString();
+    const nextJobs = jobs.map((job) => {
+      const timers = getAppOpenTimers(job.timeEvents || []);
+      if (timers.length === 0) return job;
+
+      return {
+        ...job,
+        timeEvents: [
+          ...(job.timeEvents || []),
+          ...timers.map((timer) => createAppStopEvent(timer, job)),
+        ],
+        updatedAt: now,
+      };
+    });
+
+    setJobs(nextJobs);
+    saveToStorage(quotes, nextJobs, usedRecordNumbers);
+  }
 
   function saveToStorage(nextQuotes, nextJobs, nextUsedNumbers) {
     localStorage.setItem("overkill_quotes", JSON.stringify(nextQuotes));
@@ -347,6 +899,8 @@ export default function App() {
         manualCustomers: getBackupValue(BACKUP_KEYS.manualCustomers, []),
         inventoryItems: getBackupValue(BACKUP_KEYS.inventoryItems, []),
         inventoryLogs: getBackupValue(BACKUP_KEYS.inventoryLogs, []),
+        expenses: getBackupValue(BACKUP_KEYS.expenses, []),
+        suppliers: getBackupValue(BACKUP_KEYS.suppliers, []),
         usedRecordNumbers: getBackupValue(BACKUP_KEYS.usedRecordNumbers, []),
         settings: getBackupValue(BACKUP_KEYS.settings, null),
       },
@@ -408,6 +962,8 @@ export default function App() {
       const nextInventoryLogs = Array.isArray(data.inventoryLogs)
         ? data.inventoryLogs
         : [];
+      const nextExpenses = Array.isArray(data.expenses) ? data.expenses : [];
+      const nextSuppliers = Array.isArray(data.suppliers) ? data.suppliers : [];
       const nextUsedRecordNumbers = Array.isArray(data.usedRecordNumbers)
         ? data.usedRecordNumbers
         : [];
@@ -434,6 +990,8 @@ export default function App() {
         BACKUP_KEYS.inventoryLogs,
         JSON.stringify(nextInventoryLogs)
       );
+      localStorage.setItem(BACKUP_KEYS.expenses, JSON.stringify(nextExpenses));
+      localStorage.setItem(BACKUP_KEYS.suppliers, JSON.stringify(nextSuppliers));
       localStorage.setItem(
         BACKUP_KEYS.usedRecordNumbers,
         JSON.stringify(nextUsedRecordNumbers)
@@ -450,6 +1008,8 @@ export default function App() {
       setManualCustomers(nextManualCustomers);
       setInventoryItems(nextInventoryItems);
       setInventoryLogs(nextInventoryLogs);
+      setExpenses(nextExpenses);
+      setSuppliers(nextSuppliers);
       setUsedRecordNumbers(nextUsedRecordNumbers);
       setSelectedPaymentJobId("");
       setEditingQuoteId(null);
@@ -1215,6 +1775,161 @@ export default function App() {
     }
   }
 
+
+  const globalSearchIndex = useMemo(() => {
+    return buildGlobalSearchIndex({
+      quotes,
+      jobs,
+      shippingEstimates,
+      inventoryItems,
+      inventoryLogs,
+      expenses,
+      suppliers,
+      manualCustomers,
+      customerOverrides,
+    });
+  }, [
+    quotes,
+    jobs,
+    shippingEstimates,
+    inventoryItems,
+    inventoryLogs,
+    expenses,
+    suppliers,
+    manualCustomers,
+    customerOverrides,
+  ]);
+
+  const filteredGlobalSearchResults = useMemo(() => {
+    const search = globalSearch.trim().toLowerCase();
+
+    if (!search) return [];
+
+    return globalSearchIndex
+      .filter((result) => result.searchText.includes(search))
+      .slice(0, 40);
+  }, [globalSearch, globalSearchIndex]);
+
+  const groupedGlobalSearchResults = useMemo(() => {
+    return groupSearchResults(filteredGlobalSearchResults);
+  }, [filteredGlobalSearchResults]);
+
+  function handleGlobalSearchSelect(result) {
+    if (result.page === "calculator") {
+      setEditingQuoteId(null);
+    }
+
+    if (result.page === "payments" && result.selectedPaymentJobId) {
+      setSelectedPaymentJobId(result.selectedPaymentJobId);
+    }
+
+    setActivePage(result.page);
+    setGlobalSearch("");
+    setGlobalSearchOpen(false);
+  }
+
+
+  function saveExpenses(nextExpenses) {
+    setExpenses(nextExpenses);
+    localStorage.setItem(BACKUP_KEYS.expenses, JSON.stringify(nextExpenses));
+  }
+
+  function saveSuppliers(nextSuppliers) {
+    setSuppliers(nextSuppliers);
+    localStorage.setItem(BACKUP_KEYS.suppliers, JSON.stringify(nextSuppliers));
+  }
+
+  function addExpense(expenseData) {
+    const now = new Date().toISOString();
+    const nextNumber = expenses.length + 1;
+    const newExpense = {
+      id: crypto.randomUUID(),
+      expenseNumber: `EXP-${String(nextNumber).padStart(4, "0")}`,
+      createdAt: now,
+      updatedAt: now,
+      date: expenseData.date || new Date().toISOString().slice(0, 10),
+      status: expenseData.status || "Logged",
+      recurring: false,
+      ...expenseData,
+      amount: Number(expenseData.amount || 0),
+    };
+
+    saveExpenses([newExpense, ...expenses]);
+  }
+
+  function updateExpense(expenseId, updates) {
+    const nextExpenses = expenses.map((expense) =>
+      expense.id === expenseId
+        ? {
+            ...expense,
+            ...updates,
+            amount:
+              updates.amount !== undefined
+                ? Number(updates.amount || 0)
+                : expense.amount,
+            updatedAt: new Date().toISOString(),
+          }
+        : expense
+    );
+
+    saveExpenses(nextExpenses);
+  }
+
+  function deleteExpense(expenseId) {
+    const expense = expenses.find((item) => item.id === expenseId);
+    if (!expense) return;
+
+    const confirmed = window.confirm(
+      `Delete ${expense.expenseNumber || "this expense"}? This cannot be undone.`
+    );
+
+    if (!confirmed) return;
+
+    saveExpenses(expenses.filter((item) => item.id !== expenseId));
+  }
+
+  function addSupplier(supplierData) {
+    const now = new Date().toISOString();
+    const newSupplier = {
+      id: crypto.randomUUID(),
+      createdAt: now,
+      updatedAt: now,
+      name: supplierData.name || "New Supplier",
+      category: supplierData.category || "General",
+      preferred: Boolean(supplierData.preferred),
+      ...supplierData,
+    };
+
+    saveSuppliers([newSupplier, ...suppliers]);
+  }
+
+  function updateSupplier(supplierId, updates) {
+    const nextSuppliers = suppliers.map((supplier) =>
+      supplier.id === supplierId
+        ? {
+            ...supplier,
+            ...updates,
+            updatedAt: new Date().toISOString(),
+          }
+        : supplier
+    );
+
+    saveSuppliers(nextSuppliers);
+  }
+
+  function deleteSupplier(supplierId) {
+    const supplier = suppliers.find((item) => item.id === supplierId);
+    if (!supplier) return;
+
+    const confirmed = window.confirm(
+      `Delete ${supplier.name || "this supplier"}? Existing expenses will stay saved.`
+    );
+
+    if (!confirmed) return;
+
+    saveSuppliers(suppliers.filter((item) => item.id !== supplierId));
+  }
+
   const sidebarStats = useMemo(() => {
     const activeJobs = jobs.filter((job) => !job.archived);
 
@@ -1250,6 +1965,8 @@ export default function App() {
         jobs={jobs}
         inventoryItems={inventoryItems}
         inventoryLogs={inventoryLogs}
+        expenses={expenses}
+        suppliers={suppliers}
       />
     ),
 
@@ -1299,6 +2016,13 @@ export default function App() {
       />
     ),
 
+    schedule: (
+      <SchedulePage
+        jobs={jobs}
+        onUpdateJob={updateJob}
+      />
+    ),
+
     payments: (
       <PaymentsPage
         jobs={jobs.filter((job) => !job.archived)}
@@ -1343,6 +2067,23 @@ export default function App() {
         onUpdateItem={updateInventoryItem}
         onDeleteItem={deleteInventoryItem}
         onAdjustItem={adjustInventoryItem}
+      />
+    ),
+
+
+    expenses: (
+      <ExpensesPage
+        expenses={expenses}
+        suppliers={suppliers}
+        jobs={jobs}
+        inventoryItems={inventoryItems}
+        inventoryLogs={inventoryLogs}
+        onAddExpense={addExpense}
+        onUpdateExpense={updateExpense}
+        onDeleteExpense={deleteExpense}
+        onAddSupplier={addSupplier}
+        onUpdateSupplier={updateSupplier}
+        onDeleteSupplier={deleteSupplier}
       />
     ),
 
@@ -1441,15 +2182,120 @@ export default function App() {
         <header className="top-header">
           <img src={overkillLogo} alt="Overkill Solutions" className="top-logo" />
 
-          <div>
-            <h1 className="brand-font app-title">INTERNAL PRODUCTION SYSTEM</h1>
-            <p className="muted-text">
-              Quotes, jobs, time tracking, invoices, shipping, inventory, and profitability.
-            </p>
+          <div className="top-header-content">
+            <div>
+              <h1 className="brand-font app-title">INTERNAL PRODUCTION SYSTEM</h1>
+              <p className="muted-text">
+                Quotes, jobs, time tracking, invoices, shipping, inventory, and profitability.
+              </p>
+            </div>
+
+            <div className="global-search-wrap">
+              <div className="global-search-box">
+                <Search size={18} />
+                <input
+                  type="search"
+                  value={globalSearch}
+                  placeholder="Search quotes, jobs, customers, payments, shipping, inventory..."
+                  onFocus={() => setGlobalSearchOpen(true)}
+                  onChange={(event) => {
+                    setGlobalSearch(event.target.value);
+                    setGlobalSearchOpen(true);
+                  }}
+                />
+
+                {globalSearch && (
+                  <button
+                    className="global-search-clear"
+                    type="button"
+                    onClick={() => {
+                      setGlobalSearch("");
+                      setGlobalSearchOpen(false);
+                    }}
+                  >
+                    <XCircle size={17} />
+                  </button>
+                )}
+              </div>
+
+              {globalSearchOpen && globalSearch.trim() && (
+                <div className="global-search-results">
+                  {filteredGlobalSearchResults.length === 0 ? (
+                    <div className="global-search-empty">No matching records found.</div>
+                  ) : (
+                    Object.entries(groupedGlobalSearchResults).map(([group, results]) => (
+                      <div className="global-search-group" key={group}>
+                        <div className="global-search-group-title">
+                          {SEARCH_GROUPS[group] || group}
+                        </div>
+
+                        {results.map((result) => (
+                          <button
+                            className="global-search-result"
+                            key={result.id}
+                            type="button"
+                            onClick={() => handleGlobalSearchSelect(result)}
+                          >
+                            <div>
+                              <strong>{result.title}</strong>
+                              <span>{result.detail}</span>
+                            </div>
+
+                            <em>{result.status}</em>
+                          </button>
+                        ))}
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </header>
 
         {pageContent[activePage]}
+
+        {globalOpenTimers.length > 0 && (
+          <div className="global-timer-dock">
+            <div className="global-timer-dock-header">
+              <div>
+                <strong>Live Production Timers</strong>
+                <span>
+                  {globalOpenTimers.length} running • {formatAppDuration(globalTimerTotals.hours)} • {money(globalTimerTotals.cost)} live cost
+                </span>
+              </div>
+
+              <button className="secondary-button" type="button" onClick={stopAllGlobalTimers}>
+                Stop All
+              </button>
+            </div>
+
+            <div className="global-timer-list">
+              {globalOpenTimers.slice(0, 6).map((timer) => (
+                <div className="global-timer-row" key={`${timer.job.id}-${timer.key}`}>
+                  <div>
+                    <strong>{timer.job.jobNumber} — {timer.type}</strong>
+                    <span>
+                      {timer.label || "General"} • {timer.job.customerName || "No Customer"} • {timer.event.operator || timer.job.operator || "Unassigned"}
+                    </span>
+                  </div>
+
+                  <div className="global-timer-actions">
+                    <span className="status-pill">{formatAppDuration(timer.elapsedHours)}</span>
+                    <span className="status-pill">{money(timer.liveCost)}</span>
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      onClick={() => stopGlobalTimer(timer.job.id, timer.key)}
+                    >
+                      Stop
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );

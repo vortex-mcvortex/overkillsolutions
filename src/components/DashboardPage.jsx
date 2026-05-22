@@ -10,6 +10,9 @@ import {
   Play,
   TimerOff,
   TrendingUp,
+  Gauge,
+  Activity,
+  User,
 } from "lucide-react";
 
 function money(value) {
@@ -22,6 +25,15 @@ function money(value) {
 function num(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatDuration(hoursValue) {
+  const totalMinutes = Math.max(0, Math.round(num(hoursValue) * 60));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  if (hours <= 0) return `${minutes}m`;
+  return `${hours}h ${String(minutes).padStart(2, "0")}m`;
 }
 
 function formatDateTime(value) {
@@ -251,6 +263,85 @@ function getOpenTimers(job) {
     type: event.type || "Other",
     label: event.label || "General",
   }));
+}
+
+
+function getTimerStartDate(timerEvent) {
+  if (!timerEvent?.date || !timerEvent?.time) return null;
+  const date = new Date(`${timerEvent.date}T${timerEvent.time}`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function getTimerElapsedHours(timerEvent) {
+  const startDate = getTimerStartDate(timerEvent);
+  if (!startDate) return 0;
+  const diffMs = Date.now() - startDate.getTime();
+  if (diffMs <= 0) return 0;
+  return diffMs / 1000 / 60 / 60;
+}
+
+function getLiveTimerCost(timerEvent) {
+  return getTimerElapsedHours(timerEvent) * num(timerEvent.rate);
+}
+
+function getRuntimeAnalytics(jobs) {
+  const machineMap = new Map();
+  const operatorMap = new Map();
+  let pairedHours = 0;
+  let liveHours = 0;
+  let liveCost = 0;
+
+  jobs.forEach((job) => {
+    (job.timeEvents || []).forEach((event) => {
+      const label = event.label || event.type || "General";
+      const operator = event.operator || job.operator || "Unassigned";
+
+      if (!machineMap.has(label)) {
+        machineMap.set(label, { label, pairedHours: 0, liveHours: 0, cost: 0, activeTimers: 0 });
+      }
+
+      if (!operatorMap.has(operator)) {
+        operatorMap.set(operator, { operator, pairedHours: 0, liveHours: 0, cost: 0, activeTimers: 0 });
+      }
+    });
+
+    const openTimers = getOpenTimers(job);
+    openTimers.forEach((timer) => {
+      const label = timer.label || timer.type || "General";
+      const operator = timer.event.operator || job.operator || "Unassigned";
+      const hours = getTimerElapsedHours(timer.event);
+      const cost = getLiveTimerCost(timer.event);
+
+      liveHours += hours;
+      liveCost += cost;
+
+      const machine = machineMap.get(label) || { label, pairedHours: 0, liveHours: 0, cost: 0, activeTimers: 0 };
+      machine.liveHours += hours;
+      machine.cost += cost;
+      machine.activeTimers += 1;
+      machineMap.set(label, machine);
+
+      const operatorEntry = operatorMap.get(operator) || { operator, pairedHours: 0, liveHours: 0, cost: 0, activeTimers: 0 };
+      operatorEntry.liveHours += hours;
+      operatorEntry.cost += cost;
+      operatorEntry.activeTimers += 1;
+      operatorMap.set(operator, operatorEntry);
+    });
+  });
+
+  return {
+    pairedHours,
+    liveHours,
+    liveCost,
+    machineLeaderboard: [...machineMap.values()]
+      .filter((entry) => entry.liveHours > 0 || entry.pairedHours > 0 || entry.activeTimers > 0)
+      .sort((a, b) => b.liveHours + b.pairedHours - (a.liveHours + a.pairedHours))
+      .slice(0, 10),
+    operatorLeaderboard: [...operatorMap.values()]
+      .filter((entry) => entry.liveHours > 0 || entry.pairedHours > 0 || entry.activeTimers > 0)
+      .sort((a, b) => b.liveHours + b.pairedHours - (a.liveHours + a.pairedHours))
+      .slice(0, 10),
+  };
 }
 
 function getArchiveCleanupInfo(job) {
@@ -750,6 +841,8 @@ export default function DashboardPage({
   jobs = [],
   inventoryItems = [],
   inventoryLogs = [],
+  expenses = [],
+  suppliers = [],
 }) {
   const activeJobs = jobs.filter((job) => !job.archived);
   const archivedJobs = jobs.filter((job) => job.archived);
@@ -817,8 +910,46 @@ export default function DashboardPage({
     0
   );
 
+  const runtimeAnalytics = getRuntimeAnalytics(jobs);
+  const activeTimerLiveCost = runtimeAnalytics.liveCost;
+  const activeTimerLiveHours = runtimeAnalytics.liveHours;
+  const productionEfficiencyScore = activeJobs.length > 0
+    ? Math.max(0, Math.min(100, Math.round(100 - overdueJobs.length * 12 - dueSoonJobs.length * 4 + activeTimerCount * 3)))
+    : 100;
+
   const needsAttention = buildNeedsAttention(quotes, jobs, inventoryItems);
   const recentActivity = getRecentActivity(quotes, jobs, inventoryLogs);
+
+  const currentMonthExpenses = expenses.filter((expense) => {
+    if (!expense.date) return false;
+    const date = new Date(`${expense.date}T00:00:00`);
+    const now = new Date();
+    return !Number.isNaN(date.getTime()) && date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
+  });
+
+  const currentYearExpenses = expenses.filter((expense) => {
+    if (!expense.date) return false;
+    const date = new Date(`${expense.date}T00:00:00`);
+    return !Number.isNaN(date.getTime()) && date.getFullYear() === new Date().getFullYear();
+  });
+
+  const currentMonthExpenseTotal = currentMonthExpenses.reduce((sum, expense) => sum + num(expense.amount), 0);
+  const currentYearExpenseTotal = currentYearExpenses.reduce((sum, expense) => sum + num(expense.amount), 0);
+  const recurringExpenseTotal = expenses.filter((expense) => expense.recurring).reduce((sum, expense) => sum + num(expense.amount), 0);
+  const netAfterYearExpenses = collected - currentYearExpenseTotal;
+
+  const topExpenseCategories = [...expenses.reduce((map, expense) => {
+    const key = expense.category || "Other";
+    const current = map.get(key) || { category: key, total: 0, count: 0 };
+    current.total += num(expense.amount);
+    current.count += 1;
+    map.set(key, current);
+    return map;
+  }, new Map()).values()].sort((a, b) => b.total - a.total);
+
+  const recentExpenses = [...expenses]
+    .sort((a, b) => new Date(`${b.date || "1900-01-01"}T00:00:00`) - new Date(`${a.date || "1900-01-01"}T00:00:00`))
+    .slice(0, 8);
 
   return (
     <section className="page-panel">
@@ -835,6 +966,9 @@ export default function DashboardPage({
       <div className="dashboard-stat-grid">
         <StatCard label="Active Jobs" value={activeJobs.length} icon={Hammer} />
         <StatCard label="Active Timers" value={activeTimerCount} icon={Play} />
+        <StatCard label="Live Runtime" value={formatDuration(activeTimerLiveHours)} icon={Activity} />
+        <StatCard label="Live Timer Cost" value={money(activeTimerLiveCost)} icon={Gauge} />
+        <StatCard label="Efficiency Score" value={`${productionEfficiencyScore}%`} icon={TrendingUp} />
         <StatCard label="Overdue Jobs" value={overdueJobs.length} icon={AlertTriangle} />
         <StatCard label="Due Soon" value={dueSoonJobs.length} icon={Clock} />
         <StatCard label="Deposit Due" value={depositDueJobs.length} icon={CreditCard} />
@@ -852,12 +986,145 @@ export default function DashboardPage({
         <StatCard label="Quoted Value" value={money(totalQuoted)} icon={FileText} />
         <StatCard label="Active Job Value" value={money(activeJobValue)} icon={Hammer} />
         <StatCard label="Collected" value={money(collected)} icon={CreditCard} />
+        <StatCard label="Month Expenses" value={money(currentMonthExpenseTotal)} icon={CreditCard} />
+        <StatCard label="Year Expenses" value={money(currentYearExpenseTotal)} icon={CreditCard} />
+        <StatCard label="Net After Expenses" value={money(netAfterYearExpenses)} icon={CheckCircle} />
+        <StatCard label="Recurring Expenses" value={money(recurringExpenseTotal)} icon={Clock} />
+        <StatCard label="Suppliers" value={suppliers.length} icon={PackageSearch} />
         <StatCard label="Outstanding" value={money(outstanding)} icon={AlertTriangle} />
         <StatCard label="Known Costs" value={money(knownCosts)} icon={CreditCard} />
         <StatCard label="Est. Active Profit" value={money(estimatedProfit)} icon={CheckCircle} />
       </div>
 
       <div className="dashboard-sections">
+        <div className="form-card dashboard-full-span production-dock-card">
+          <h3 className="card-title">Currently Running Production</h3>
+          {openTimerJobs.length === 0 ? (
+            <p className="muted-text">No live production timers are running.</p>
+          ) : (
+            <div className="dashboard-list">
+              {openTimerJobs.slice(0, 8).map((job) => (
+                <div className="dashboard-list-row" key={job.id}>
+                  <div>
+                    <strong>{job.jobNumber} — {job.customerName || "No Customer"}</strong>
+                    <span>{job.jobName || "Untitled Job"}</span>
+                    <small>
+                      Operator: {job.operator || "Unassigned"} • {getOpenTimers(job).length} active timer{getOpenTimers(job).length === 1 ? "" : "s"}
+                    </small>
+                  </div>
+                  <div className="dashboard-status-stack">
+                    {getOpenTimers(job).map((timer) => (
+                      <span className="status-pill" key={timer.key}>
+                        {timer.type} / {timer.label || "General"} • {formatDuration(getTimerElapsedHours(timer.event))}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <ListCard title="Machine Runtime Leaderboard">
+          {runtimeAnalytics.machineLeaderboard.length === 0 ? (
+            <p className="muted-text">No active machine runtime yet.</p>
+          ) : (
+            <div className="dashboard-list">
+              {runtimeAnalytics.machineLeaderboard.map((machine) => (
+                <div className="dashboard-list-row" key={machine.label}>
+                  <div>
+                    <strong>{machine.label}</strong>
+                    <span>{machine.activeTimers} active timer{machine.activeTimers === 1 ? "" : "s"}</span>
+                  </div>
+                  <div className="dashboard-status-stack">
+                    <span className="status-pill">{formatDuration(machine.liveHours + machine.pairedHours)}</span>
+                    <strong>{money(machine.cost)}</strong>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </ListCard>
+
+        <ListCard title="Operator Runtime Leaderboard">
+          {runtimeAnalytics.operatorLeaderboard.length === 0 ? (
+            <p className="muted-text">No operator runtime yet.</p>
+          ) : (
+            <div className="dashboard-list">
+              {runtimeAnalytics.operatorLeaderboard.map((operator) => (
+                <div className="dashboard-list-row" key={operator.operator}>
+                  <div>
+                    <strong>{operator.operator}</strong>
+                    <span>{operator.activeTimers} active timer{operator.activeTimers === 1 ? "" : "s"}</span>
+                  </div>
+                  <div className="dashboard-status-stack">
+                    <span className="status-pill">{formatDuration(operator.liveHours + operator.pairedHours)}</span>
+                    <strong>{money(operator.cost)}</strong>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </ListCard>
+
+
+        <ListCard title="Financial Snapshot">
+          {expenses.length === 0 ? (
+            <p className="muted-text">No expenses logged yet.</p>
+          ) : (
+            <div className="dashboard-list">
+              <div className="dashboard-list-row">
+                <div><strong>This Month Expenses</strong><span>Current calendar month</span></div>
+                <strong>{money(currentMonthExpenseTotal)}</strong>
+              </div>
+              <div className="dashboard-list-row">
+                <div><strong>This Year Expenses</strong><span>Current calendar year</span></div>
+                <strong>{money(currentYearExpenseTotal)}</strong>
+              </div>
+              <div className="dashboard-list-row">
+                <div><strong>Estimated Net After Expenses</strong><span>Collected revenue minus current-year expenses</span></div>
+                <strong>{money(netAfterYearExpenses)}</strong>
+              </div>
+            </div>
+          )}
+        </ListCard>
+
+        <ListCard title="Top Expense Categories">
+          {topExpenseCategories.length === 0 ? (
+            <p className="muted-text">No category spending yet.</p>
+          ) : (
+            <div className="dashboard-list">
+              {topExpenseCategories.slice(0, 8).map((category) => (
+                <div className="dashboard-list-row" key={category.category}>
+                  <div><strong>{category.category}</strong><span>{category.count} expense{category.count === 1 ? "" : "s"}</span></div>
+                  <strong>{money(category.total)}</strong>
+                </div>
+              ))}
+            </div>
+          )}
+        </ListCard>
+
+        <ListCard title="Recent Expenses">
+          {recentExpenses.length === 0 ? (
+            <p className="muted-text">No expenses logged yet.</p>
+          ) : (
+            <div className="dashboard-list">
+              {recentExpenses.map((expense) => (
+                <div className="dashboard-list-row" key={expense.id}>
+                  <div>
+                    <strong>{expense.expenseNumber || "EXP"} — {expense.name || expense.vendor || "Expense"}</strong>
+                    <span>{expense.category || "Expense"} • {expense.vendor || "No vendor"}</span>
+                  </div>
+                  <div className="dashboard-status-stack">
+                    <span className="status-pill">{expense.status || "Logged"}</span>
+                    <strong>{money(expense.amount)}</strong>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </ListCard>
+
         <ListCard title="Needs Attention">
           {needsAttention.length === 0 ? (
             <p className="muted-text">Nothing urgent right now.</p>

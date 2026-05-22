@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Plus,
   Trash2,
@@ -18,6 +18,9 @@ import {
   PackageSearch,
   Paperclip,
   Link,
+  User,
+  Activity,
+  Gauge,
 } from "lucide-react";
 import { exportInvoicePdf, exportProductionSheetPdf } from "../utils/pdf";
 
@@ -147,6 +150,30 @@ function calculateHours(startEvent, stopEvent) {
   if (diffMs <= 0) return 0;
 
   return diffMs / 1000 / 60 / 60;
+}
+
+
+function formatDuration(hoursValue) {
+  const totalMinutes = Math.max(0, Math.round(num(hoursValue) * 60));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  if (hours <= 0) return `${minutes}m`;
+  return `${hours}h ${String(minutes).padStart(2, "0")}m`;
+}
+
+function getTimerElapsedHours(timerEvent) {
+  const startedAt = getEventDateTime(timerEvent);
+  if (!startedAt) return 0;
+
+  const diffMs = Date.now() - startedAt.getTime();
+  if (diffMs <= 0) return 0;
+
+  return diffMs / 1000 / 60 / 60;
+}
+
+function getOpenTimerCost(timerEvent) {
+  return getTimerElapsedHours(timerEvent) * num(timerEvent.rate);
 }
 
 function getTodayStart() {
@@ -381,6 +408,7 @@ function createTimeEvent(overrides = {}) {
     time: "",
     rate: 3,
     notes: "",
+    operator: "",
     createdByTimer: false,
     timerSessionId: "",
     ...overrides,
@@ -607,6 +635,7 @@ export default function JobsPage({
   const [priorityFilter, setPriorityFilter] = useState("All");
   const [dueDateFilter, setDueDateFilter] = useState("All");
   const [materialUsageDrafts, setMaterialUsageDrafts] = useState({});
+  const [timerTick, setTimerTick] = useState(0);
 
   const activeJobs = jobs.filter((job) => !job.archived);
   const archivedJobs = jobs.filter((job) => job.archived);
@@ -658,6 +687,33 @@ export default function JobsPage({
   const pendingInventoryFinalizationCount = activeJobs.filter(
     (job) => job.status !== "Completed" && getJobMaterialUsage(job).length > 0 && !hasInventoryDeductionRecord(job)
   ).length;
+  const scheduledCount = activeJobs.filter((job) => Boolean(job.scheduleStart)).length;
+
+  const totalLiveTimerHours = activeJobs.reduce((sum, job) => {
+    return sum + getOpenTimers(job.timeEvents || []).reduce((jobSum, timer) => {
+      return jobSum + getTimerElapsedHours(timer.event);
+    }, 0);
+  }, 0);
+
+  const liveTimerCost = activeJobs.reduce((sum, job) => {
+    return sum + getOpenTimers(job.timeEvents || []).reduce((jobSum, timer) => {
+      return jobSum + getOpenTimerCost(timer.event);
+    }, 0);
+  }, 0);
+
+  const completedTimePairs = jobs.reduce((sum, job) => {
+    return sum + pairTimeEvents(job.timeEvents || []).length;
+  }, 0);
+
+  useEffect(() => {
+    if (activeTimerCount <= 0) return undefined;
+
+    const intervalId = window.setInterval(() => {
+      setTimerTick((current) => current + 1);
+    }, 30000);
+
+    return () => window.clearInterval(intervalId);
+  }, [activeTimerCount]);
     function getMaterialUsageDraft(jobId) {
     return materialUsageDrafts[jobId] || EMPTY_MATERIAL_USAGE;
   }
@@ -802,6 +858,7 @@ export default function JobsPage({
       time: nowTimeString(),
       rate: getDefaultRateForEventType(type),
       notes: `Timer started for ${type}${label ? ` — ${label}` : ""}.`,
+      operator: job.operator || "",
       createdByTimer: true,
       timerSessionId,
     });
@@ -827,6 +884,7 @@ export default function JobsPage({
       time: nowTimeString(),
       rate: startEvent.rate || getDefaultRateForEventType(startEvent.type),
       notes: `Timer stopped for ${startEvent.type}${startEvent.label ? ` — ${startEvent.label}` : ""}.`,
+      operator: startEvent.operator || job.operator || "",
       createdByTimer: true,
       timerSessionId: startEvent.timerSessionId || crypto.randomUUID(),
     });
@@ -853,6 +911,7 @@ export default function JobsPage({
         time: nowTimeString(),
         rate: timer.event.rate || getDefaultRateForEventType(timer.event.type),
         notes: `Timer stopped for ${timer.event.type}${timer.event.label ? ` — ${timer.event.label}` : ""}.`,
+        operator: timer.event.operator || job.operator || "",
         createdByTimer: true,
         timerSessionId: timer.event.timerSessionId || crypto.randomUUID(),
       })
@@ -1014,6 +1073,18 @@ export default function JobsPage({
     const profitMargin =
       customerTotal > 0 ? (estimatedProfit / customerTotal) * 100 : 0;
 
+    const openTimers = getOpenTimers(timeEvents);
+    const liveTimerHours = openTimers.reduce((sum, timer) => {
+      return sum + getTimerElapsedHours(timer.event);
+    }, 0);
+    const liveTimerCost = openTimers.reduce((sum, timer) => {
+      return sum + getOpenTimerCost(timer.event);
+    }, 0);
+    const actualPlusLiveCost = totalActualCost + liveTimerCost;
+    const liveProfitEstimate = customerTotal - actualPlusLiveCost;
+    const liveProfitMargin =
+      customerTotal > 0 ? (liveProfitEstimate / customerTotal) * 100 : 0;
+
     return {
       pairedEvents,
       machineHours,
@@ -1029,6 +1100,12 @@ export default function JobsPage({
       remainingToCollect,
       estimatedProfit,
       profitMargin,
+      openTimers,
+      liveTimerHours,
+      liveTimerCost,
+      actualPlusLiveCost,
+      liveProfitEstimate,
+      liveProfitMargin,
     };
   }
 
@@ -1598,6 +1675,29 @@ export default function JobsPage({
 
             <div className="record-title">{job.jobName || "Untitled Job"}</div>
 
+            <div className="production-intelligence-strip">
+              <div>
+                <span>Live Timer Cost</span>
+                <strong>{money(calc.liveTimerCost)}</strong>
+              </div>
+              <div>
+                <span>Live Runtime</span>
+                <strong>{formatDuration(calc.liveTimerHours)}</strong>
+              </div>
+              <div>
+                <span>Actual + Live Cost</span>
+                <strong>{money(calc.actualPlusLiveCost)}</strong>
+              </div>
+              <div>
+                <span>Live Profit Estimate</span>
+                <strong>{money(calc.liveProfitEstimate)}</strong>
+              </div>
+              <div>
+                <span>Live Margin</span>
+                <strong>{calc.liveProfitMargin.toFixed(1)}%</strong>
+              </div>
+            </div>
+
             {openTimers.length > 0 && (
               <div className="customer-warning-box">
                 <strong>
@@ -1660,6 +1760,63 @@ export default function JobsPage({
                 </label>
 
                 <Field
+                  label="Operator / Owner"
+                  type="text"
+                  value={job.operator || ""}
+                  onChange={(value) =>
+                    onUpdateJob(job.id, {
+                      operator: value,
+                    })
+                  }
+                />
+
+                <Field
+                  label="Scheduled Start"
+                  type="datetime-local"
+                  value={job.scheduleStart || ""}
+                  onChange={(value) =>
+                    onUpdateJob(job.id, {
+                      scheduleStart: value,
+                      scheduleStatus: value ? job.scheduleStatus || "Scheduled" : "Not Scheduled",
+                    })
+                  }
+                />
+
+                <Field
+                  label="Scheduled End"
+                  type="datetime-local"
+                  value={job.scheduleEnd || ""}
+                  onChange={(value) =>
+                    onUpdateJob(job.id, {
+                      scheduleEnd: value,
+                    })
+                  }
+                />
+
+                <label className="field">
+                  <span>Machine / Station</span>
+                  <select
+                    value={job.scheduleMachine || "Unassigned"}
+                    onChange={(event) =>
+                      onUpdateJob(job.id, {
+                        scheduleMachine: event.target.value,
+                      })
+                    }
+                  >
+                    <option value="Unassigned">Unassigned</option>
+                    <option value="Bambu P1S">Bambu P1S</option>
+                    <option value="Bambu X1C">Bambu X1C</option>
+                    <option value="Bambu H2S">Bambu H2S</option>
+                    <option value="H2S Laser — 10W">H2S Laser — 10W</option>
+                    <option value="H2S Laser — 40W">H2S Laser — 40W</option>
+                    <option value="H2S Cutter">H2S Cutter</option>
+                    <option value="Assembly / Bench Work">Assembly / Bench Work</option>
+                    <option value="CAD / Design">CAD / Design</option>
+                    <option value="Packaging / Shipping">Packaging / Shipping</option>
+                  </select>
+                </label>
+
+                <Field
                   label="Due Date"
                   type="date"
                   value={job.dueDate || ""}
@@ -1693,8 +1850,21 @@ export default function JobsPage({
                 />
               </div>
 
+              <label className="field single-row-gap">
+                <span>Schedule Notes</span>
+                <textarea
+                  value={job.scheduleNotes || ""}
+                  onChange={(event) =>
+                    onUpdateJob(job.id, {
+                      scheduleNotes: event.target.value,
+                    })
+                  }
+                  placeholder="Schedule constraints, machine notes, material dependencies, overnight print notes, pickup timing, etc."
+                />
+              </label>
+
               <p className="helper-note">
-                Active jobs are sorted by overdue status, priority, due date, then latest update.
+                Active jobs are sorted by overdue status, priority, due date, then latest update. Full planning is in the Schedule tab.
               </p>
             </div>
 
@@ -1706,6 +1876,10 @@ export default function JobsPage({
               {job.jobAspects?.custom && <span>Custom</span>}
               {job.importedFromPdf && <span>Imported PDF</span>}
               {job.archived && <span>Archived</span>}
+              {job.operator && <span>Operator: {job.operator}</span>}
+              {job.scheduleStart && <span>Scheduled: {String(job.scheduleStart).replace("T", " ")}</span>}
+              {job.scheduleMachine && <span>Machine: {job.scheduleMachine}</span>}
+              {job.scheduleStatus && <span>Schedule: {job.scheduleStatus}</span>}
               {priority && <span>{priority} Priority</span>}
               {job.dueDate && <span>Due {job.dueDate}</span>}
               {dueStatus.isOverdue && <span>{dueStatus.label}</span>}
@@ -1838,6 +2012,25 @@ export default function JobsPage({
                         Started {timer.event.date || "No date"} at {timer.event.time || "No time"}.
                       </p>
 
+                      <div className="production-intelligence-strip compact-production-strip">
+                        <div>
+                          <span>Elapsed</span>
+                          <strong>{formatDuration(getTimerElapsedHours(timer.event))}</strong>
+                        </div>
+                        <div>
+                          <span>Live Cost</span>
+                          <strong>{money(getOpenTimerCost(timer.event))}</strong>
+                        </div>
+                        <div>
+                          <span>Rate</span>
+                          <strong>{money(timer.event.rate)}/hr</strong>
+                        </div>
+                        <div>
+                          <span>Operator</span>
+                          <strong>{timer.event.operator || job.operator || "Not Set"}</strong>
+                        </div>
+                      </div>
+
                       <button
                         className="primary-button single-row-gap"
                         type="button"
@@ -1949,6 +2142,15 @@ export default function JobsPage({
                           value={event.rate}
                           onChange={(value) =>
                             updateTimeEvent(job.id, event.id, "rate", value)
+                          }
+                        />
+
+                        <Field
+                          label="Operator"
+                          type="text"
+                          value={event.operator || ""}
+                          onChange={(value) =>
+                            updateTimeEvent(job.id, event.id, "operator", value)
                           }
                         />
 
@@ -2183,6 +2385,9 @@ export default function JobsPage({
         <div><span>Rush Jobs</span><strong>{rushCount}</strong></div>
         <div><span>High Priority</span><strong>{highPriorityCount}</strong></div>
         <div><span>Active Timers</span><strong>{activeTimerCount}</strong></div>
+        <div><span>Live Runtime</span><strong>{formatDuration(totalLiveTimerHours)}</strong></div>
+        <div><span>Live Timer Cost</span><strong>{money(liveTimerCost)}</strong></div>
+        <div><span>Completed Time Pairs</span><strong>{completedTimePairs}</strong></div>
         <div><span>Low Stock</span><strong>{lowStockItems.length}</strong></div>
         <div><span>Pending Inventory</span><strong>{pendingInventoryFinalizationCount}</strong></div>
         <div><span>Attachments</span><strong>{attachmentCount}</strong></div>
