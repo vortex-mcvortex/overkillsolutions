@@ -13,6 +13,8 @@ import {
   Gauge,
   Activity,
   User,
+  Bot,
+  Bell,
 } from "lucide-react";
 
 function money(value) {
@@ -817,6 +819,143 @@ function buildNeedsAttention(quotes, jobs, inventoryItems) {
   return items.slice(0, 18);
 }
 
+
+function getScheduledStart(job) {
+  return job.scheduleStart || job.scheduledStart || job.productionStart || "";
+}
+
+function getScheduledMachine(job) {
+  return job.scheduleMachine || job.assignedMachine || job.machine || "Unassigned";
+}
+
+function isScheduledThisWeek(job) {
+  const start = getScheduledStart(job);
+  if (!start) return false;
+
+  const today = getTodayStart();
+  const target = new Date(`${String(start).slice(0, 10)}T00:00:00`);
+  const weekEnd = new Date(today);
+  weekEnd.setDate(weekEnd.getDate() + 6);
+
+  return !Number.isNaN(target.getTime()) && target >= today && target <= weekEnd;
+}
+
+function isScheduledToday(job) {
+  const start = getScheduledStart(job);
+  if (!start) return false;
+  return String(start).slice(0, 10) === new Date().toISOString().slice(0, 10);
+}
+
+function isScheduleOverdue(job) {
+  const start = getScheduledStart(job);
+  if (!start || job.archived || job.status === "Completed") return false;
+
+  const target = new Date(`${String(start).slice(0, 10)}T00:00:00`);
+  return !Number.isNaN(target.getTime()) && target < getTodayStart();
+}
+
+function getEstimatedScheduleHours(job) {
+  if (num(job.estimatedScheduleHours) > 0) return num(job.estimatedScheduleHours);
+  const formData = job.quoteSnapshot?.formData || job.formData || {};
+  const printRuns = formData.printRuns || [];
+  const printHours = printRuns.reduce((sum, run) => sum + num(run.printHours || run.machineHours || run.hours), 0);
+  return Math.max(0.25, printHours || num(formData.machineHours) || 1);
+}
+
+function getSmartAutomationSignals(quotes, jobs, inventoryItems) {
+  const signals = [];
+  const closedQuoteStatuses = ["Approved", "Declined", "Expired"];
+
+  quotes.forEach((quote) => {
+    const status = getQuoteStatus(quote);
+    const age = getQuoteAgeDays(quote);
+    const expiration = getQuoteExpirationInfo(quote);
+
+    if (!closedQuoteStatuses.includes(status) && expiration.isExpired) {
+      signals.push({
+        id: `auto-quote-expired-${quote.id}`,
+        severity: "danger",
+        title: `${quote.quoteNumber} should be expired`,
+        detail: `${quote.customerName || "No Customer"} • ${expiration.label}`,
+      });
+    } else if (!closedQuoteStatuses.includes(status) && age >= 7) {
+      signals.push({
+        id: `auto-quote-followup-${quote.id}`,
+        severity: age >= 14 ? "warning" : "normal",
+        title: `${quote.quoteNumber} needs follow-up`,
+        detail: `${quote.customerName || "No Customer"} • ${age} days old`,
+      });
+    }
+  });
+
+  jobs.forEach((job) => {
+    const due = getDueDateStatus(job);
+    const payment = getPaymentSummary(job);
+    const knownCost = calculateKnownCosts(job);
+    const revenue = num(job.finalTotal);
+    const margin = revenue > 0 && knownCost > 0 ? ((revenue - knownCost) / revenue) * 100 : null;
+
+    if (!job.archived && due.isOverdue && job.status !== "Completed") {
+      signals.push({
+        id: `auto-job-overdue-${job.id}`,
+        severity: "danger",
+        title: `${job.jobNumber} is overdue`,
+        detail: `${job.customerName || "No Customer"} • ${due.label}`,
+      });
+    }
+
+    if (!job.archived && due.isDueSoon && job.status !== "Completed") {
+      signals.push({
+        id: `auto-job-due-${job.id}`,
+        severity: "warning",
+        title: `${job.jobNumber} is due soon`,
+        detail: `${job.customerName || "No Customer"} • ${due.label}`,
+      });
+    }
+
+    if (!job.archived && payment.remaining > 0 && job.status === "Completed") {
+      signals.push({
+        id: `auto-job-balance-${job.id}`,
+        severity: "danger",
+        title: `${job.jobNumber} completed with balance`,
+        detail: `${money(payment.remaining)} still outstanding`,
+      });
+    }
+
+    if (margin !== null && margin < 20) {
+      signals.push({
+        id: `auto-job-margin-${job.id}`,
+        severity: margin < 10 ? "danger" : "warning",
+        title: `${job.jobNumber} has low margin`,
+        detail: `${margin.toFixed(1)}% estimated margin`,
+      });
+    }
+  });
+
+  inventoryItems.forEach((item) => {
+    if (isOutOfStock(item)) {
+      signals.push({
+        id: `auto-stock-out-${item.id}`,
+        severity: "danger",
+        title: `${item.name} is out of stock`,
+        detail: `${item.category} • ${item.material || "No material"} • ${item.color || "No color"}`,
+      });
+    } else if (isLowStock(item)) {
+      signals.push({
+        id: `auto-stock-low-${item.id}`,
+        severity: "warning",
+        title: `${item.name} is low stock`,
+        detail: `${item.quantityOnHand} ${item.unit} remaining`,
+      });
+    }
+  });
+
+  return signals.sort((a, b) => {
+    const rank = { danger: 3, warning: 2, normal: 1 };
+    return rank[b.severity] - rank[a.severity];
+  });
+}
+
 function StatCard({ label, value, icon: Icon }) {
   return (
     <div className="dashboard-stat-card">
@@ -846,6 +985,13 @@ export default function DashboardPage({
 }) {
   const activeJobs = jobs.filter((job) => !job.archived);
   const archivedJobs = jobs.filter((job) => job.archived);
+  const scheduledTodayJobs = activeJobs.filter(isScheduledToday);
+  const scheduledThisWeekJobs = activeJobs.filter(isScheduledThisWeek);
+  const scheduleOverdueJobs = activeJobs.filter(isScheduleOverdue);
+  const scheduledWeekHours = scheduledThisWeekJobs.reduce(
+    (sum, job) => sum + getEstimatedScheduleHours(job),
+    0
+  );
 
   const openTimerJobs = activeJobs.filter((job) => getOpenTimers(job).length > 0);
   const overdueJobs = activeJobs.filter((job) => getDueDateStatus(job).isOverdue);
@@ -919,6 +1065,9 @@ export default function DashboardPage({
 
   const needsAttention = buildNeedsAttention(quotes, jobs, inventoryItems);
   const recentActivity = getRecentActivity(quotes, jobs, inventoryLogs);
+  const smartAutomationSignals = getSmartAutomationSignals(quotes, jobs, inventoryItems);
+  const criticalAutomationSignals = smartAutomationSignals.filter((signal) => signal.severity === "danger").length;
+  const warningAutomationSignals = smartAutomationSignals.filter((signal) => signal.severity === "warning").length;
 
   const currentMonthExpenses = expenses.filter((expense) => {
     if (!expense.date) return false;
@@ -965,6 +1114,10 @@ export default function DashboardPage({
 
       <div className="dashboard-stat-grid">
         <StatCard label="Active Jobs" value={activeJobs.length} icon={Hammer} />
+        <StatCard label="Scheduled Today" value={scheduledTodayJobs.length} icon={Clock} />
+        <StatCard label="Schedule Week" value={scheduledThisWeekJobs.length} icon={Hammer} />
+        <StatCard label="Schedule Overdue" value={scheduleOverdueJobs.length} icon={AlertTriangle} />
+        <StatCard label="Scheduled Hours" value={scheduledWeekHours.toFixed(1)} icon={Clock} />
         <StatCard label="Active Timers" value={activeTimerCount} icon={Play} />
         <StatCard label="Live Runtime" value={formatDuration(activeTimerLiveHours)} icon={Activity} />
         <StatCard label="Live Timer Cost" value={money(activeTimerLiveCost)} icon={Gauge} />
@@ -983,6 +1136,8 @@ export default function DashboardPage({
         <StatCard label="Usage Cost" value={money(totalMaterialUsageCost)} icon={TrendingUp} />
         <StatCard label="Pending Inventory" value={pendingInventoryJobs.length} icon={PackageSearch} />
         <StatCard label="Completed Warnings" value={completedInventoryWarningJobs.length} icon={AlertTriangle} />
+        <StatCard label="Automation Critical" value={criticalAutomationSignals} icon={Bot} />
+        <StatCard label="Automation Warnings" value={warningAutomationSignals} icon={Bell} />
         <StatCard label="Quoted Value" value={money(totalQuoted)} icon={FileText} />
         <StatCard label="Active Job Value" value={money(activeJobValue)} icon={Hammer} />
         <StatCard label="Collected" value={money(collected)} icon={CreditCard} />
@@ -1144,6 +1299,52 @@ export default function DashboardPage({
                   </div>
                 );
               })}
+            </div>
+          )}
+        </ListCard>
+
+        <ListCard title="Smart Automation Watchlist">
+          {smartAutomationSignals.length === 0 ? (
+            <p className="muted-text">No automation warnings right now.</p>
+          ) : (
+            <div className="dashboard-list">
+              {smartAutomationSignals.slice(0, 10).map((signal) => (
+                <div className={`dashboard-list-row attention-${signal.severity}`} key={signal.id}>
+                  <div>
+                    <strong>
+                      <Bot size={16} /> {signal.title}
+                    </strong>
+                    <span>{signal.detail}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </ListCard>
+
+        <ListCard title="This Week's Production Schedule">
+          {scheduledThisWeekJobs.length === 0 ? (
+            <p className="muted-text">No jobs scheduled for the next 7 days.</p>
+          ) : (
+            <div className="dashboard-list">
+              {scheduledThisWeekJobs
+                .slice()
+                .sort((a, b) => new Date(getScheduledStart(a)) - new Date(getScheduledStart(b)))
+                .slice(0, 10)
+                .map((job) => (
+                  <div className="dashboard-list-row" key={job.id}>
+                    <div>
+                      <strong>{job.jobNumber} — {job.customerName || "No Customer"}</strong>
+                      <span>{job.jobName || "Untitled Job"}</span>
+                      <small>{formatDateTime(getScheduledStart(job))} • {getScheduledMachine(job)}</small>
+                    </div>
+
+                    <div className="dashboard-status-stack">
+                      {isScheduleOverdue(job) && <span className="status-pill">Overdue</span>}
+                      <span className="status-pill">{getEstimatedScheduleHours(job).toFixed(1)} hr</span>
+                    </div>
+                  </div>
+                ))}
             </div>
           )}
         </ListCard>

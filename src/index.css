@@ -1888,50 +1888,10 @@ textarea:focus {
     top: 155px;
   }
 }
-.inventory-intelligence-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px;
-}
 
-.inventory-intelligence-details {
-  margin-top: 14px;
-}
 
-.inventory-status-danger {
-  border-color: rgba(214, 40, 40, 0.55);
-  background: rgba(214, 40, 40, 0.14);
-  color: #ff9a9a;
-}
 
-.inventory-status-warning {
-  border-color: rgba(255, 165, 0, 0.5);
-  background: rgba(255, 165, 0, 0.12);
-  color: #ffd27a;
-}
-
-.inventory-status-success {
-  border-color: rgba(46, 204, 113, 0.42);
-  background: rgba(46, 204, 113, 0.1);
-  color: #8dffba;
-}
-
-.inventory-status-normal {
-  border-color: rgba(208, 208, 208, 0.22);
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--color-silver);
-}
-
-.attention-success {
-  border-color: rgba(46, 204, 113, 0.32);
-  background: rgba(46, 204, 113, 0.06);
-}
-
-@media (max-width: 950px) {
-  .inventory-intelligence-grid {
-    grid-template-columns: 1fr;
-  }
-}
+/* PRODUCTION INTELLIGENCE */
 .production-intelligence-strip {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -2064,40 +2024,9 @@ textarea:focus {
     flex: 1 1 auto;
   }
 }
-.customer-health-needs-attention {
-  border-color: rgba(214, 40, 40, 0.55);
-  background: rgba(214, 40, 40, 0.045);
-}
 
-.customer-health-watch {
-  border-color: rgba(255, 165, 0, 0.42);
-  background: rgba(255, 165, 0, 0.035);
-}
 
-.customer-health-healthy {
-  border-color: rgba(46, 204, 113, 0.25);
-}
-
-.customer-contact-actions {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin: 0 0 16px;
-}
-
-.customer-contact-actions a {
-  text-decoration: none;
-}
-
-.customer-card .record-tags span svg,
-.dashboard-list-row strong svg {
-  vertical-align: -2px;
-  margin-right: 4px;
-}
-
-@media (max-width: 800px) {
-  .customer-contact-actions {
-    grid-template-columns: 1fr;
-  }
-}
+/* FINANCIAL / BUSINESS INTELLIGENCE */
 .financial-stat-grid .dashboard-stat-card strong {
   font-size: 1.22rem;
 }
@@ -2133,6 +2062,9 @@ textarea:focus {
     justify-content: flex-start;
   }
 }
+
+
+/* PRODUCTION SCHEDULING */
 .schedule-week-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
@@ -2251,6 +2183,7 @@ textarea:focus {
     flex-direction: column;
   }
 }
+/* Pinned live quote summary for Calculator page */
 .sticky-summary-card {
   position: fixed;
   right: 28px;
@@ -2293,5 +2226,842 @@ textarea:focus {
 
   .sticky-summary-card .primary-button {
     width: 100%;
+  }
+}
+/* SMART WORKFLOW AUTOMATION */
+.automation-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.75fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.automation-main-panel {
+  min-height: 360px;
+}
+
+.automation-feed {
+  display: grid;
+  gap: 12px;
+}
+
+.automation-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.automation-card div {
+  display: grid;
+  gap: 5px;
+}
+
+.automation-card strong {
+  color: var(--color-silver);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.automation-card span,
+.automation-card small {
+  color: var(--color-gray);
+  line-height: 1.45;
+}
+
+.automation-danger {
+  border-color: rgba(214, 40, 40, 0.6);
+  background: rgba(214, 40, 40, 0.09);
+}
+
+.automation-warning {
+  border-color: rgba(255, 165, 0, 0.5);
+  background: rgba(255, 165, 0, 0.075);
+}
+
+.automation-normal {
+  border-color: rgba(208, 208, 208, 0.22);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.automation-flag-tag {
+  border-color: var(--color-border);
+}
+
+.automation-flag-tag.automation-danger,
+.record-tags .automation-danger {
+  border-color: rgba(214, 40, 40, 0.55);
+  background: rgba(214, 40, 40, 0.12);
+  color: #ffb3b3;
+}
+
+.automation-flag-tag.automation-warning,
+.record-tags .automation-warning {
+  border-color: rgba(255, 165, 0, 0.5);
+  background: rgba(255, 165, 0, 0.1);
+  color: #ffd27a;
+}
+
+.automation-flag-tag.automation-normal,
+.record-tags .automation-normal {
+  border-color: rgba(208, 208, 208, 0.24);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.automation-job-alert-box .record-tags {
+  margin-top: 8px;
+  margin-bottom: 0;
+}
+
+@media (max-width: 1000px) {
+  .automation-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* BACKEND / CUSTOMER PORTAL PREP */
+
+.backend-record-card {
+  background: rgba(5, 5, 5, 0.65);
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius);
+  overflow: hidden;
+}
+
+.backend-record-card.backend-ready {
+  border-color: rgba(46, 204, 113, 0.35);
+}
+
+.backend-record-card.backend-not-ready {
+  border-color: rgba(255, 165, 0, 0.35);
+}
+
+.backend-json-card {
+  margin-top: 16px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  padding: 14px;
+}
+
+.backend-json-card pre {
+  overflow: auto;
+  max-height: 360px;
+  background: #050505;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 14px;
+  color: var(--color-silver);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+/* Admin / Data Maintenance */
+.admin-page .card-title svg {
+  vertical-align: -3px;
+  margin-right: 6px;
+}
+
+.admin-health-grid .admin-stat-card small {
+  color: var(--muted-text);
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.admin-repair-card {
+  border: 1px solid rgba(214, 40, 40, 0.22);
+  background: linear-gradient(135deg, rgba(214, 40, 40, 0.08), rgba(255, 255, 255, 0.02));
+}
+
+.admin-repair-actions {
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.admin-diagnostics-list {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.admin-issue-card {
+  border-left: 4px solid rgba(255, 255, 255, 0.12);
+}
+
+.admin-issue-danger {
+  border-left-color: #ff4d4d;
+  background: linear-gradient(135deg, rgba(255, 77, 77, 0.08), rgba(255, 255, 255, 0.02));
+}
+
+.admin-issue-warning {
+  border-left-color: #f5b84b;
+  background: linear-gradient(135deg, rgba(245, 184, 75, 0.08), rgba(255, 255, 255, 0.02));
+}
+
+.admin-issue-info {
+  border-left-color: #7aa7ff;
+}
+
+.admin-issue-success {
+  border-left-color: #61d394;
+  background: linear-gradient(135deg, rgba(97, 211, 148, 0.08), rgba(255, 255, 255, 0.02));
+}
+
+.admin-severity-danger {
+  color: #ffb7b7;
+  border-color: rgba(255, 77, 77, 0.45);
+  background: rgba(255, 77, 77, 0.1);
+}
+
+.admin-severity-warning {
+  color: #ffe0a3;
+  border-color: rgba(245, 184, 75, 0.45);
+  background: rgba(245, 184, 75, 0.1);
+}
+
+.admin-severity-info {
+  color: #c5d7ff;
+  border-color: rgba(122, 167, 255, 0.45);
+  background: rgba(122, 167, 255, 0.1);
+}
+
+.admin-severity-success {
+  color: #b7ffd3;
+  border-color: rgba(97, 211, 148, 0.45);
+  background: rgba(97, 211, 148, 0.1);
+}
+
+@media (max-width: 760px) {
+  .admin-repair-actions .secondary-button {
+    width: 100%;
+    justify-content: center;
+  }
+}
+/* CONDENSED SIDEBAR GROUPS */
+.condensed-nav-list {
+  gap: 16px;
+}
+
+.nav-group {
+  display: grid;
+  gap: 8px;
+}
+
+.nav-group + .nav-group {
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.nav-group-label {
+  color: var(--color-gray);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  padding: 0 10px;
+}
+
+.nav-group-items {
+  display: grid;
+  gap: 8px;
+}
+
+.condensed-nav-list .nav-button {
+  padding: 10px 12px;
+}
+
+.condensed-nav-list .nav-button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 850px) {
+  .condensed-nav-list {
+    grid-template-columns: 1fr;
+  }
+
+  .nav-group-items {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .nav-group-label {
+    padding: 0;
+  }
+}
+
+@media (max-width: 520px) {
+  .nav-group-items {
+    grid-template-columns: 1fr;
+  }
+}
+/* High priority cleanup: settings shortcuts, reports/charts, templates, and mobile polish */
+.settings-section-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0 18px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.settings-section-nav .secondary-button {
+  min-height: 36px;
+  padding: 8px 12px;
+}
+
+.template-grid,
+.reports-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.template-card {
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  border-radius: 18px;
+  padding: 18px;
+  box-shadow: var(--shadow-soft);
+}
+
+.template-card-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.template-card-top h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px;
+}
+
+.template-card-top p {
+  color: var(--muted);
+  margin: 0;
+}
+
+.active-filter-button {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(214, 40, 40, 0.08);
+}
+
+.reports-wide-card {
+  grid-column: 1 / -1;
+}
+
+.analytics-bar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.analytics-bar-row {
+  display: grid;
+  gap: 6px;
+}
+
+.analytics-bar-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.92rem;
+}
+
+.analytics-bar-label span {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.analytics-bar-track {
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.analytics-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(214, 40, 40, 0.85), rgba(255, 255, 255, 0.35));
+}
+
+.monthly-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(34px, 1fr));
+  gap: 10px;
+  height: 240px;
+  align-items: end;
+  padding: 12px 4px 0;
+}
+
+.monthly-chart-column {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  gap: 8px;
+  min-width: 0;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.monthly-bars {
+  display: flex;
+  align-items: end;
+  justify-content: center;
+  gap: 3px;
+  height: 200px;
+  border-bottom: 1px solid var(--border);
+}
+
+.monthly-bar {
+  width: 9px;
+  min-height: 4px;
+  border-radius: 999px 999px 0 0;
+}
+
+.monthly-revenue,
+.revenue-dot {
+  background: #46c37b;
+}
+
+.monthly-expense,
+.expense-dot {
+  background: #e3ad48;
+}
+
+.monthly-profit,
+.profit-dot {
+  background: #d62828;
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+@media (max-width: 980px) {
+  .template-grid,
+  .reports-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .monthly-chart-grid {
+    overflow-x: auto;
+    grid-template-columns: repeat(12, 42px);
+    padding-bottom: 8px;
+  }
+
+  .settings-section-nav {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    backdrop-filter: blur(14px);
+  }
+}
+
+@media (max-width: 720px) {
+  .page-panel {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .filter-toolbar,
+  .record-button-row,
+  .job-action-row,
+  .customer-edit-actions,
+  .settings-action-row {
+    align-items: stretch;
+  }
+
+  .filter-toolbar > *,
+  .record-button-row > *,
+  .job-action-row > *,
+  .settings-action-row > * {
+    width: 100%;
+  }
+
+  .dashboard-stat-grid,
+  .job-queue-summary,
+  .job-summary-grid,
+  .record-details,
+  .customer-contact-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .template-card,
+  .form-card,
+  .job-detail-card,
+  .customer-card,
+  .inventory-card {
+    border-radius: 14px;
+    padding: 14px;
+  }
+
+  .monthly-chart-grid {
+    height: 210px;
+  }
+
+  .monthly-bars {
+    height: 170px;
+  }
+}
+
+@media (max-width: 460px) {
+  .dashboard-stat-grid,
+  .job-queue-summary,
+  .job-summary-grid,
+  .record-details,
+  .customer-contact-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .template-card-top,
+  .analytics-bar-label {
+    flex-direction: column;
+  }
+}
+.settings-section-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0 18px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.settings-section-nav .secondary-button {
+  min-height: 36px;
+  padding: 8px 12px;
+}
+
+.template-grid,
+.reports-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.template-card {
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  border-radius: 18px;
+  padding: 18px;
+  box-shadow: var(--shadow-soft);
+}
+
+.template-card-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.template-card-top h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px;
+}
+
+.template-card-top p {
+  color: var(--muted);
+  margin: 0;
+}
+
+.active-filter-button {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(214, 40, 40, 0.08);
+}
+
+.reports-wide-card {
+  grid-column: 1 / -1;
+}
+
+.analytics-bar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.analytics-bar-row {
+  display: grid;
+  gap: 6px;
+}
+
+.analytics-bar-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.92rem;
+}
+
+.analytics-bar-label span {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.analytics-bar-track {
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.analytics-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(214, 40, 40, 0.85), rgba(255, 255, 255, 0.35));
+}
+
+.monthly-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(34px, 1fr));
+  gap: 10px;
+  height: 240px;
+  align-items: end;
+  padding: 12px 4px 0;
+}
+
+.monthly-chart-column {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  gap: 8px;
+  min-width: 0;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.monthly-bars {
+  display: flex;
+  align-items: end;
+  justify-content: center;
+  gap: 3px;
+  height: 200px;
+  border-bottom: 1px solid var(--border);
+}
+
+.monthly-bar {
+  width: 9px;
+  min-height: 4px;
+  border-radius: 999px 999px 0 0;
+}
+
+.monthly-revenue,
+.revenue-dot {
+  background: #46c37b;
+}
+
+.monthly-expense,
+.expense-dot {
+  background: #e3ad48;
+}
+
+.monthly-profit,
+.profit-dot {
+  background: #d62828;
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+@media (max-width: 980px) {
+  .template-grid,
+  .reports-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .monthly-chart-grid {
+    overflow-x: auto;
+    grid-template-columns: repeat(12, 42px);
+    padding-bottom: 8px;
+  }
+
+  .settings-section-nav {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    backdrop-filter: blur(14px);
+  }
+}
+
+@media (max-width: 720px) {
+  .page-panel {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .filter-toolbar,
+  .record-button-row,
+  .job-action-row,
+  .customer-edit-actions,
+  .settings-action-row {
+    align-items: stretch;
+  }
+
+  .filter-toolbar > *,
+  .record-button-row > *,
+  .job-action-row > *,
+  .settings-action-row > * {
+    width: 100%;
+  }
+
+  .dashboard-stat-grid,
+  .job-queue-summary,
+  .job-summary-grid,
+  .record-details,
+  .customer-contact-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .template-card,
+  .form-card,
+  .job-detail-card,
+  .customer-card,
+  .inventory-card {
+    border-radius: 14px;
+    padding: 14px;
+  }
+
+  .monthly-chart-grid {
+    height: 210px;
+  }
+
+  .monthly-bars {
+    height: 170px;
+  }
+}
+
+@media (max-width: 460px) {
+  .dashboard-stat-grid,
+  .job-queue-summary,
+  .job-summary-grid,
+  .record-details,
+  .customer-contact-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .template-card-top,
+  .analytics-bar-label {
+    flex-direction: column;
+  }
+}
+.reports-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  align-items: start;
+}
+
+.report-action-card .card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.report-button-grid {
+  align-items: stretch;
+}
+
+.report-button-grid button {
+  min-height: 42px;
+}
+
+.reports-scroll-list {
+  max-height: 520px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+@media (max-width: 1100px) {
+  .reports-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media print {
+  .sidebar,
+  .top-header,
+  .filter-toolbar,
+  .record-button-row,
+  .nav-list,
+  button {
+    display: none !important;
+  }
+
+  .app-shell,
+  .main-area,
+  .page-panel {
+    display: block !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+    background: white !important;
+    color: black !important;
+  }
+
+  .form-card,
+  .dashboard-list-row,
+  .dashboard-stat-card {
+    break-inside: avoid;
+    box-shadow: none !important;
+    border-color: #ccc !important;
   }
 }

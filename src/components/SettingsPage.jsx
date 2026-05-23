@@ -334,6 +334,27 @@ export default function SettingsPage() {
     setSaveMessage("Settings reset to defaults.");
   }
 
+  const settingsShortcuts = [
+    ["Business", 0],
+    ["Customer Fields", 1],
+    ["Machine Rates", 2],
+    ["Fees", 3],
+    ["Minimums", 5],
+    ["Buffers", 6],
+    ["Payments", 7],
+    ["Machines", 8],
+    ["Nozzles", 9],
+    ["CAD", 10],
+    ["Print Materials", 11],
+    ["Engraving", 12],
+    ["Vinyl", 13],
+  ];
+
+  function scrollToSettingsCard(index) {
+    const cards = document.querySelectorAll(".settings-grid .form-card");
+    cards[index]?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   return (
     <section className="page-panel">
       <div className="page-heading-row">
@@ -357,6 +378,19 @@ export default function SettingsPage() {
             Save Settings
           </button>
         </div>
+      </div>
+
+      <div className="settings-section-nav">
+        {settingsShortcuts.map(([label, index]) => (
+          <button
+            className="secondary-button"
+            key={label}
+            type="button"
+            onClick={() => scrollToSettingsCard(index)}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       <div className="settings-grid">

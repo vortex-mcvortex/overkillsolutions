@@ -614,6 +614,48 @@ function getInventoryCompletionStatus(job) {
   };
 }
 
+function getJobAutomationAlerts(job) {
+  const flags = job.automationFlags || {};
+  const alerts = [];
+
+  if (flags.overdue) {
+    alerts.push({
+      severity: "danger",
+      label: `Automation: overdue${flags.overdueDays ? ` by ${flags.overdueDays} day${flags.overdueDays === 1 ? "" : "s"}` : ""}`,
+    });
+  }
+
+  if (flags.dueSoon) {
+    alerts.push({
+      severity: "warning",
+      label: `Automation: due soon${flags.dueSoonDays !== undefined ? ` (${flags.dueSoonDays === 0 ? "today" : `${flags.dueSoonDays} day${flags.dueSoonDays === 1 ? "" : "s"}`})` : ""}`,
+    });
+  }
+
+  if (flags.lowMargin) {
+    alerts.push({
+      severity: "warning",
+      label: `Automation: low margin${flags.margin !== undefined ? ` (${flags.margin}%)` : ""}`,
+    });
+  }
+
+  if (flags.completedWithBalance) {
+    alerts.push({
+      severity: "danger",
+      label: "Automation: completed with balance",
+    });
+  }
+
+  if (flags.autoArchived) {
+    alerts.push({
+      severity: "normal",
+      label: "Automation: auto-archived",
+    });
+  }
+
+  return alerts;
+}
+
 export default function JobsPage({
   jobs,
   inventoryItems = [],
@@ -1362,6 +1404,7 @@ export default function JobsPage({
     const selectedItem = inventoryItems.find((item) => item.id === draft.itemId);
     const usageEvents = getJobMaterialUsage(job);
     const inventoryStatus = getInventoryCompletionStatus(job);
+    const automationAlerts = getJobAutomationAlerts(job);
 
     return (
       <div className="form-card">
@@ -1567,6 +1610,7 @@ export default function JobsPage({
     const archiveInfo = getArchiveDeleteInfo(job);
     const remainingBalance = getRemainingBalance(job);
     const inventoryStatus = getInventoryCompletionStatus(job);
+    const automationAlerts = getJobAutomationAlerts(job);
 
     return (
       <article
@@ -1602,6 +1646,10 @@ export default function JobsPage({
 
             {job.inventoryDeductedAt && <span className="status-pill">Inventory Finalized</span>}
             {job.inventoryDeductionSkipped && <span className="status-pill">Inventory Skipped</span>}
+
+            {automationAlerts.length > 0 && (
+              <span className="status-pill">{automationAlerts.length} Automation Flag{automationAlerts.length === 1 ? "" : "s"}</span>
+            )}
 
             {attachments.length > 0 && (
               <span className="status-pill">
@@ -1708,6 +1756,24 @@ export default function JobsPage({
                     .map((timer) => `${timer.type} — ${timer.label || "General"}`)
                     .join(", ")}
                 </p>
+              </div>
+            )}
+
+            {automationAlerts.length > 0 && (
+              <div className="customer-warning-box automation-job-alert-box">
+                <strong>
+                  <AlertTriangle size={18} /> Automation Flags
+                </strong>
+                <div className="record-tags">
+                  {automationAlerts.map((alert) => (
+                    <span key={alert.label} className={`automation-flag-tag automation-${alert.severity}`}>
+                      {alert.label}
+                    </span>
+                  ))}
+                </div>
+                {job.automationCheckedAt && (
+                  <p className="helper-note">Last automation check: {new Date(job.automationCheckedAt).toLocaleString()}</p>
+                )}
               </div>
             )}
 
@@ -1890,6 +1956,7 @@ export default function JobsPage({
               {job.inventoryDeductedAt && <span>Inventory Finalized</span>}
               {job.inventoryDeductionSkipped && <span>Inventory Skipped</span>}
               {attachments.length > 0 && <span>{attachments.length} Attachment(s)</span>}
+              {automationAlerts.length > 0 && <span>{automationAlerts.length} Automation Flag(s)</span>}
             </div>
 
             {job.queueNotes && <p className="helper-note">Queue Notes: {job.queueNotes}</p>}

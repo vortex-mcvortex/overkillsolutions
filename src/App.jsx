@@ -15,6 +15,11 @@ import {
   XCircle,
   DollarSign,
   CalendarDays,
+  Bot,
+  Database,
+  ShieldCheck,
+  ClipboardList,
+  BarChart3,
 } from "lucide-react";
 
 import CalculatorPage from "./components/CalculatorPage";
@@ -28,25 +33,63 @@ import ShippingPage from "./components/ShippingPage";
 import InventoryPage from "./components/InventoryPage";
 import ExpensesPage from "./components/ExpensesPage";
 import SchedulePage from "./components/SchedulePage";
+import AutomationPage from "./components/AutomationPage";
+import BackendReadinessPage from "./components/BackendReadinessPage";
+import AdminPage from "./components/AdminPage";
+import TemplateManagerPage from "./components/TemplateManagerPage";
+import ReportsPage from "./components/ReportsPage";
 import { importOverkillPdf } from "./utils/pdfImport";
 
 import overkillLogo from "./assets/logos/overkill_main.png";
 import overkillMark from "./assets/logos/overkill_mark.png";
 
-const APP_VERSION = "v0.1.0";
+const APP_VERSION = "v1.0.0";
 
-const NAV_ITEMS = [
-  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { id: "calculator", label: "Calculator", icon: Calculator },
-  { id: "quotes", label: "Quotes", icon: FileText },
-  { id: "jobs", label: "Jobs", icon: Hammer },
-  { id: "schedule", label: "Schedule", icon: CalendarDays },
-  { id: "payments", label: "Payments", icon: CreditCard },
-  { id: "expenses", label: "Expenses", icon: DollarSign },
-  { id: "customers", label: "Customers", icon: Users },
-  { id: "shipping", label: "Shipping", icon: Truck },
-  { id: "inventory", label: "Inventory", icon: PackageSearch },
-  { id: "settings", label: "Settings", icon: Settings },
+const NAV_GROUPS = [
+  {
+    id: "main",
+    label: "Main",
+    items: [{ id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+      { id: "reports", label: "Reports", icon: BarChart3 }],
+  },
+  {
+    id: "sales",
+    label: "Sales",
+    items: [
+      { id: "calculator", label: "Calculator", icon: Calculator },
+      { id: "quotes", label: "Quotes", icon: FileText },
+      { id: "customers", label: "Customers", icon: Users },
+      { id: "payments", label: "Payments", icon: CreditCard },
+      { id: "templates", label: "Templates", icon: ClipboardList },
+    ],
+  },
+  {
+    id: "production",
+    label: "Production",
+    items: [
+      { id: "jobs", label: "Jobs", icon: Hammer },
+      { id: "schedule", label: "Schedule", icon: CalendarDays },
+      { id: "automation", label: "Automation", icon: Bot },
+    ],
+  },
+  {
+    id: "operations",
+    label: "Operations",
+    items: [
+      { id: "inventory", label: "Inventory", icon: PackageSearch },
+      { id: "expenses", label: "Expenses", icon: DollarSign },
+      { id: "shipping", label: "Shipping", icon: Truck },
+    ],
+  },
+  {
+    id: "system",
+    label: "System",
+    items: [
+      { id: "settings", label: "Settings", icon: Settings },
+      { id: "admin", label: "Admin Tools", icon: ShieldCheck },
+      { id: "backend", label: "Backend Prep", icon: Database },
+    ],
+  },
 ];
 
 const BACKUP_KEYS = {
@@ -72,6 +115,11 @@ const SEARCH_GROUPS = {
   inventory: "Inventory",
   expenses: "Expenses",
   suppliers: "Suppliers",
+  automation: "Automation",
+  backend: "Backend Prep",
+  admin: "Admin",
+  templates: "Templates",
+  reports: "Reports",
 };
 
 
@@ -1970,6 +2018,19 @@ export default function App() {
       />
     ),
 
+    reports: (
+      <ReportsPage
+        quotes={quotes}
+        jobs={jobs}
+        inventoryItems={inventoryItems}
+        inventoryLogs={inventoryLogs}
+        expenses={expenses}
+        shippingEstimates={shippingEstimates}
+        manualCustomers={manualCustomers}
+        customerOverrides={customerOverrides}
+      />
+    ),
+
     calculator: (
       <CalculatorPage
         onSaveQuote={saveQuote}
@@ -2023,12 +2084,80 @@ export default function App() {
       />
     ),
 
+    automation: (
+      <AutomationPage
+        quotes={quotes}
+        jobs={jobs}
+        inventoryItems={inventoryItems}
+        inventoryLogs={inventoryLogs}
+        expenses={expenses}
+        customerOverrides={customerOverrides}
+        manualCustomers={manualCustomers}
+        onUpdateQuoteWorkflow={updateQuoteWorkflow}
+        onUpdateJob={updateJob}
+        onUpdateCustomer={updateCustomerOverride}
+        onUpdateManualCustomer={updateManualCustomer}
+        onAdjustInventoryItem={adjustInventoryItem}
+      />
+    ),
+
+    backend: (
+      <BackendReadinessPage
+        quotes={quotes}
+        jobs={jobs}
+        manualCustomers={manualCustomers}
+        customerOverrides={customerOverrides}
+        onUpdateQuoteWorkflow={updateQuoteWorkflow}
+        onUpdateJob={updateJob}
+        onUpdateCustomer={updateCustomerOverride}
+        onUpdateManualCustomer={updateManualCustomer}
+      />
+    ),
+
+    admin: (
+      <AdminPage
+        quotes={quotes}
+        jobs={jobs}
+        inventoryItems={inventoryItems}
+        inventoryLogs={inventoryLogs}
+        expenses={expenses}
+        shippingEstimates={shippingEstimates}
+        manualCustomers={manualCustomers}
+        customerOverrides={customerOverrides}
+        usedRecordNumbers={usedRecordNumbers}
+        onUpdateQuoteWorkflow={updateQuoteWorkflow}
+        onUpdateJob={updateJob}
+        onUpdateCustomer={updateCustomerOverride}
+        onUpdateManualCustomer={updateManualCustomer}
+        onUpdateInventoryItem={updateInventoryItem}
+      />
+    ),
+
     payments: (
       <PaymentsPage
         jobs={jobs.filter((job) => !job.archived)}
         selectedJobId={selectedPaymentJobId}
         onSelectJob={setSelectedPaymentJobId}
         onUpdateJob={updateJob}
+      />
+    ),
+
+    templates: (
+      <TemplateManagerPage
+        quotes={quotes}
+        jobs={jobs}
+        onUseTemplate={(template) => {
+          const formData = template.formData || {};
+          saveQuote({
+            ...template.quoteData,
+            formData,
+            jobName: template.name || formData.jobName || "Template Quote",
+            customerName: "",
+            customerPhone: "",
+            customerEmail: "",
+            customerAddress: "",
+          });
+        }}
       />
     ),
 
@@ -2103,25 +2232,33 @@ export default function App() {
           </div>
         </div>
 
-        <nav className="nav-list">
-          {NAV_ITEMS.map((item) => {
-            const Icon = item.icon;
-            const isActive = activePage === item.id;
+        <nav className="nav-list condensed-nav-list">
+          {NAV_GROUPS.map((group) => (
+            <div className="nav-group" key={group.id}>
+              <div className="nav-group-label">{group.label}</div>
 
-            return (
-              <button
-                key={item.id}
-                className={`nav-button ${isActive ? "active" : ""}`}
-                onClick={() => {
-                  if (item.id !== "calculator") setEditingQuoteId(null);
-                  setActivePage(item.id);
-                }}
-              >
-                <Icon size={18} />
-                <span>{item.label}</span>
-              </button>
-            );
-          })}
+              <div className="nav-group-items">
+                {group.items.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = activePage === item.id;
+
+                  return (
+                    <button
+                      key={item.id}
+                      className={`nav-button ${isActive ? "active" : ""}`}
+                      onClick={() => {
+                        if (item.id !== "calculator") setEditingQuoteId(null);
+                        setActivePage(item.id);
+                      }}
+                    >
+                      <Icon size={18} />
+                      <span>{item.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </nav>
 
         <div className="sidebar-mini-stats">
@@ -2186,7 +2323,7 @@ export default function App() {
             <div>
               <h1 className="brand-font app-title">INTERNAL PRODUCTION SYSTEM</h1>
               <p className="muted-text">
-                Quotes, jobs, time tracking, invoices, shipping, inventory, and profitability.
+                Quotes, jobs, scheduling, automation, invoices, inventory, CRM, and profitability.
               </p>
             </div>
 
