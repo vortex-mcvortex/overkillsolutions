@@ -1025,103 +1025,143 @@ export default function App() {
 }
 
   async function importBackupFile(file) {
-    if (!file) return;
+  if (!file) return;
 
-    try {
-      const text = await file.text();
-      const parsed = JSON.parse(text);
+  try {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
 
-      if (parsed.app !== "overkill-solutions-app" || !parsed.data) {
-        window.alert("This does not look like a valid Overkill Solutions backup file.");
-        return;
-      }
+    const data =
+      parsed?.app === "overkill-solutions-app" && parsed?.data
+        ? parsed.data
+        : parsed?.data && typeof parsed.data === "object"
+          ? parsed.data
+          : parsed;
 
-      const confirmed = window.confirm(
-        "Restore this backup? This will replace current local app data on this device."
-      );
-
-      if (!confirmed) return;
-
-      const data = parsed.data;
-
-      const nextQuotes = Array.isArray(data.quotes) ? data.quotes : [];
-      const nextJobs = Array.isArray(data.jobs) ? data.jobs : [];
-      const nextShippingEstimates = Array.isArray(data.shippingEstimates)
-        ? data.shippingEstimates
-        : [];
-      const nextCustomerOverrides =
-        data.customerOverrides && typeof data.customerOverrides === "object"
-          ? data.customerOverrides
-          : {};
-      const nextManualCustomers = Array.isArray(data.manualCustomers)
-        ? data.manualCustomers
-        : [];
-      const nextInventoryItems = Array.isArray(data.inventoryItems)
-        ? data.inventoryItems
-        : [];
-      const nextInventoryLogs = Array.isArray(data.inventoryLogs)
-        ? data.inventoryLogs
-        : [];
-      const nextExpenses = Array.isArray(data.expenses) ? data.expenses : [];
-      const nextSuppliers = Array.isArray(data.suppliers) ? data.suppliers : [];
-      const nextUsedRecordNumbers = Array.isArray(data.usedRecordNumbers)
-        ? data.usedRecordNumbers
-        : [];
-
-      localStorage.setItem(BACKUP_KEYS.quotes, JSON.stringify(nextQuotes));
-      localStorage.setItem(BACKUP_KEYS.jobs, JSON.stringify(nextJobs));
-      localStorage.setItem(
-        BACKUP_KEYS.shippingEstimates,
-        JSON.stringify(nextShippingEstimates)
-      );
-      localStorage.setItem(
-        BACKUP_KEYS.customerOverrides,
-        JSON.stringify(nextCustomerOverrides)
-      );
-      localStorage.setItem(
-        BACKUP_KEYS.manualCustomers,
-        JSON.stringify(nextManualCustomers)
-      );
-      localStorage.setItem(
-        BACKUP_KEYS.inventoryItems,
-        JSON.stringify(nextInventoryItems)
-      );
-      localStorage.setItem(
-        BACKUP_KEYS.inventoryLogs,
-        JSON.stringify(nextInventoryLogs)
-      );
-      localStorage.setItem(BACKUP_KEYS.expenses, JSON.stringify(nextExpenses));
-      localStorage.setItem(BACKUP_KEYS.suppliers, JSON.stringify(nextSuppliers));
-      localStorage.setItem(
-        BACKUP_KEYS.usedRecordNumbers,
-        JSON.stringify(nextUsedRecordNumbers)
-      );
-
-      if (data.settings) {
-        localStorage.setItem(BACKUP_KEYS.settings, JSON.stringify(data.settings));
-      }
-
-      setQuotes(nextQuotes);
-      setJobs(nextJobs);
-      setShippingEstimates(nextShippingEstimates);
-      setCustomerOverrides(nextCustomerOverrides);
-      setManualCustomers(nextManualCustomers);
-      setInventoryItems(nextInventoryItems);
-      setInventoryLogs(nextInventoryLogs);
-      setExpenses(nextExpenses);
-      setSuppliers(nextSuppliers);
-      setUsedRecordNumbers(nextUsedRecordNumbers);
-      setSelectedPaymentJobId("");
-      setEditingQuoteId(null);
-      setImportMessage("");
-      setBackupMessage("Backup restored. Reloading app data...");
-
-      window.location.reload();
-    } catch (error) {
-      console.error(error);
-      window.alert("Backup restore failed. The file may be damaged or not valid JSON.");
+    if (!data || typeof data !== "object") {
+      window.alert("This backup file does not contain usable app data.");
+      return;
     }
+
+    const confirmed = window.confirm(
+      "Restore this backup? This will replace current local app data on this device."
+    );
+
+    if (!confirmed) return;
+
+    const nextQuotes = Array.isArray(data.quotes) ? data.quotes : [];
+    const nextJobs = Array.isArray(data.jobs) ? data.jobs : [];
+    const nextShippingEstimates = Array.isArray(data.shippingEstimates)
+      ? data.shippingEstimates
+      : [];
+    const nextCustomerOverrides =
+      data.customerOverrides && typeof data.customerOverrides === "object"
+        ? data.customerOverrides
+        : {};
+    const nextManualCustomers = Array.isArray(data.manualCustomers)
+      ? data.manualCustomers
+      : [];
+    const nextInventoryItems = Array.isArray(data.inventoryItems)
+      ? data.inventoryItems
+      : [];
+    const nextInventoryLogs = Array.isArray(data.inventoryLogs)
+      ? data.inventoryLogs
+      : [];
+    const nextExpenses = Array.isArray(data.expenses) ? data.expenses : [];
+    const nextScheduleItems = Array.isArray(data.scheduleItems)
+      ? data.scheduleItems
+      : [];
+    const nextAutomationRules = Array.isArray(data.automationRules)
+      ? data.automationRules
+      : [];
+    const nextTemplates = Array.isArray(data.templates) ? data.templates : [];
+    const nextUsedRecordNumbers = Array.isArray(data.usedRecordNumbers)
+      ? data.usedRecordNumbers
+      : [];
+
+    localStorage.setItem(BACKUP_KEYS.quotes, JSON.stringify(nextQuotes));
+    localStorage.setItem(BACKUP_KEYS.jobs, JSON.stringify(nextJobs));
+    localStorage.setItem(
+      BACKUP_KEYS.shippingEstimates,
+      JSON.stringify(nextShippingEstimates)
+    );
+    localStorage.setItem(
+      BACKUP_KEYS.customerOverrides,
+      JSON.stringify(nextCustomerOverrides)
+    );
+    localStorage.setItem(
+      BACKUP_KEYS.manualCustomers,
+      JSON.stringify(nextManualCustomers)
+    );
+    localStorage.setItem(
+      BACKUP_KEYS.inventoryItems,
+      JSON.stringify(nextInventoryItems)
+    );
+    localStorage.setItem(
+      BACKUP_KEYS.inventoryLogs,
+      JSON.stringify(nextInventoryLogs)
+    );
+
+    if (BACKUP_KEYS.expenses) {
+      localStorage.setItem(BACKUP_KEYS.expenses, JSON.stringify(nextExpenses));
+    }
+
+    if (BACKUP_KEYS.scheduleItems) {
+      localStorage.setItem(
+        BACKUP_KEYS.scheduleItems,
+        JSON.stringify(nextScheduleItems)
+      );
+    }
+
+    if (BACKUP_KEYS.automationRules) {
+      localStorage.setItem(
+        BACKUP_KEYS.automationRules,
+        JSON.stringify(nextAutomationRules)
+      );
+    }
+
+    if (BACKUP_KEYS.templates) {
+      localStorage.setItem(BACKUP_KEYS.templates, JSON.stringify(nextTemplates));
+    }
+
+    localStorage.setItem(
+      BACKUP_KEYS.usedRecordNumbers,
+      JSON.stringify(nextUsedRecordNumbers)
+    );
+
+    if (data.settings) {
+      localStorage.setItem(BACKUP_KEYS.settings, JSON.stringify(data.settings));
+    }
+
+    setQuotes(nextQuotes);
+    setJobs(nextJobs);
+    setShippingEstimates(nextShippingEstimates);
+    setCustomerOverrides(nextCustomerOverrides);
+    setManualCustomers(nextManualCustomers);
+    setInventoryItems(nextInventoryItems);
+    setInventoryLogs(nextInventoryLogs);
+
+    if (typeof setExpenses === "function") setExpenses(nextExpenses);
+    if (typeof setScheduleItems === "function") setScheduleItems(nextScheduleItems);
+    if (typeof setAutomationRules === "function") setAutomationRules(nextAutomationRules);
+    if (typeof setTemplates === "function") setTemplates(nextTemplates);
+
+    setUsedRecordNumbers(nextUsedRecordNumbers);
+    setSelectedPaymentJobId("");
+    setEditingQuoteId(null);
+    setImportMessage("");
+    setBackupMessage("Backup restored. Reloading app data...");
+
+    setTimeout(() => {
+      window.location.reload();
+    }, 500);
+  } catch (error) {
+    console.error(error);
+    window.alert(
+      `Backup restore failed: ${error?.message || "Unknown error"}`
+    );
   }
+}
 
   function handleBackupImportChange(event) {
     const file = event.target.files?.[0];
