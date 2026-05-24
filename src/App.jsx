@@ -934,43 +934,95 @@ export default function App() {
     saveInventory(nextItems, [log, ...inventoryLogs]);
   }
 
-  function exportBackup() {
-    const backup = {
-      app: "overkill-solutions-app",
-      version: APP_VERSION,
-      exportedAt: new Date().toISOString(),
-      data: {
-        quotes: getBackupValue(BACKUP_KEYS.quotes, []),
-        jobs: getBackupValue(BACKUP_KEYS.jobs, []),
-        shippingEstimates: getBackupValue(BACKUP_KEYS.shippingEstimates, []),
-        customerOverrides: getBackupValue(BACKUP_KEYS.customerOverrides, {}),
-        manualCustomers: getBackupValue(BACKUP_KEYS.manualCustomers, []),
-        inventoryItems: getBackupValue(BACKUP_KEYS.inventoryItems, []),
-        inventoryLogs: getBackupValue(BACKUP_KEYS.inventoryLogs, []),
-        expenses: getBackupValue(BACKUP_KEYS.expenses, []),
-        suppliers: getBackupValue(BACKUP_KEYS.suppliers, []),
-        usedRecordNumbers: getBackupValue(BACKUP_KEYS.usedRecordNumbers, []),
-        settings: getBackupValue(BACKUP_KEYS.settings, null),
-      },
-    };
+  async function exportBackup() {
+  const backup = {
+    app: "overkill-solutions-app",
+    version: APP_VERSION,
+    exportedAt: new Date().toISOString(),
+    data: {
+      quotes: getBackupValue(BACKUP_KEYS.quotes, []),
+      jobs: getBackupValue(BACKUP_KEYS.jobs, []),
+      shippingEstimates: getBackupValue(BACKUP_KEYS.shippingEstimates, []),
+      customerOverrides: getBackupValue(BACKUP_KEYS.customerOverrides, {}),
+      manualCustomers: getBackupValue(BACKUP_KEYS.manualCustomers, []),
+      inventoryItems: getBackupValue(BACKUP_KEYS.inventoryItems, []),
+      inventoryLogs: getBackupValue(BACKUP_KEYS.inventoryLogs, []),
+      expenses: getBackupValue(BACKUP_KEYS.expenses, []),
+      scheduleItems: getBackupValue(BACKUP_KEYS.scheduleItems, []),
+      automationRules: getBackupValue(BACKUP_KEYS.automationRules, []),
+      templates: getBackupValue(BACKUP_KEYS.templates, []),
+      usedRecordNumbers: getBackupValue(BACKUP_KEYS.usedRecordNumbers, []),
+      settings: getBackupValue(BACKUP_KEYS.settings, null),
+    },
+  };
 
-    const blob = new Blob([JSON.stringify(backup, null, 2)], {
-      type: "application/json",
+  const backupText = JSON.stringify(backup, null, 2);
+  const dateStamp = new Date().toISOString().slice(0, 10);
+  const fileName = `overkill-solutions-backup-${dateStamp}.json`;
+
+  try {
+    if ("showSaveFilePicker" in window) {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: fileName,
+        types: [
+          {
+            description: "JSON Backup File",
+            accept: { "application/json": [".json"] },
+          },
+        ],
+      });
+
+      const writable = await handle.createWritable();
+      await writable.write(backupText);
+      await writable.close();
+
+      setBackupMessage(`Backup saved as ${fileName}.`);
+      return;
+    }
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      setBackupMessage("Backup save cancelled.");
+      return;
+    }
+
+    console.error(error);
+  }
+
+  try {
+    const blob = new Blob([backupText], {
+      type: "application/json;charset=utf-8",
     });
 
-    const dateStamp = new Date().toISOString().slice(0, 10);
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
 
     link.href = url;
-    link.download = `overkill-solutions-backup-${dateStamp}.json`;
+    link.download = fileName;
+    link.rel = "noopener";
+    link.style.display = "none";
+
     document.body.appendChild(link);
     link.click();
-    link.remove();
 
-    URL.revokeObjectURL(url);
-    setBackupMessage("Backup exported.");
+    setTimeout(() => {
+      link.remove();
+      URL.revokeObjectURL(url);
+    }, 5000);
+
+    setBackupMessage(`Backup download started as ${fileName}.`);
+    return;
+  } catch (error) {
+    console.error(error);
   }
+
+  try {
+    await navigator.clipboard.writeText(backupText);
+    setBackupMessage(`Download failed, but backup was copied. Paste into Notepad and save as ${fileName}.`);
+  } catch (error) {
+    console.error(error);
+    window.alert("Backup export failed. Open the browser console for details.");
+  }
+}
 
   async function importBackupFile(file) {
     if (!file) return;
