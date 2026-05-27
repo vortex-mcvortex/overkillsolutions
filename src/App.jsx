@@ -20,6 +20,7 @@ import {
   ShieldCheck,
   ClipboardList,
   BarChart3,
+  Menu,
 } from "lucide-react";
 
 import CalculatorPage from "./components/CalculatorPage";
@@ -39,6 +40,14 @@ import AdminPage from "./components/AdminPage";
 import TemplateManagerPage from "./components/TemplateManagerPage";
 import ReportsPage from "./components/ReportsPage";
 import { importOverkillPdf } from "./utils/pdfImport";
+import { isSupabaseConfigured, supabase } from "./lib/supabaseClient";
+import {
+  CLOUD_TABLES,
+  pullAllCloudData,
+  pullCollectionFromCloud,
+  pushAllLocalDataToCloud,
+  pushCollectionToCloud,
+} from "./lib/syncService";
 
 import overkillLogo from "./assets/logos/overkill_main.png";
 import overkillMark from "./assets/logos/overkill_mark.png";
@@ -102,8 +111,15 @@ const BACKUP_KEYS = {
   inventoryLogs: "overkill_inventory_logs",
   expenses: "overkill_expenses",
   suppliers: "overkill_suppliers",
+  scheduleItems: "overkill_schedule_items",
+  automationRules: "overkill_automation_rules",
+  templates: "overkill_templates",
   usedRecordNumbers: "overkill_used_record_numbers",
   settings: "overkill_settings",
+  cloudSyncEnabled: "overkill_cloud_sync_enabled",
+  snapshots: "overkill_cloud_snapshots",
+  trash: "overkill_trash_records",
+  recordHistory: "overkill_record_history",
 };
 
 const SEARCH_GROUPS = {
@@ -120,6 +136,21 @@ const SEARCH_GROUPS = {
   admin: "Admin",
   templates: "Templates",
   reports: "Reports",
+};
+
+
+const CLOUD_MISC_SETTINGS_ID = "misc";
+const CLOUD_SYNC_DEBOUNCE_MS = 700;
+const CLOUD_POLL_INTERVAL_MS = 5000;
+const CLOUD_RECENT_LOCAL_PUSH_GRACE_MS = 2500;
+
+const LOCAL_TO_CLOUD_TABLES = {
+  quotes: CLOUD_TABLES.quotes,
+  jobs: CLOUD_TABLES.jobs,
+  inventoryItems: CLOUD_TABLES.inventoryItems,
+  inventoryLogs: CLOUD_TABLES.inventoryLogs,
+  manualCustomers: CLOUD_TABLES.customers,
+  expenses: CLOUD_TABLES.expenses,
 };
 
 
@@ -659,8 +690,57 @@ function createAppStopEvent(timer, job) {
   };
 }
 
+function getCloudSyncStateFromMessage(message, isOnline = true) {
+  const text = String(message || "").toLowerCase();
+
+  if (!isOnline) return "offline";
+  if (text.includes("failed") || text.includes("error") || text.includes("not configured") || text.includes("not set")) return "error";
+  if (text.includes("paused")) return "paused";
+  if (text.includes("syncing") || text.includes("started") || text.includes("pulling") || text.includes("pushing")) return "syncing";
+  if (text.includes("complete") || text.includes("synced") || text.includes("connected") || text.includes("ready") || text.includes("refreshed")) return "synced";
+
+  return "ready";
+}
+
+function getCloudSyncLabel(syncState, cloudSyncEnabled, isConfigured, isOnline) {
+  if (!isOnline) return "Offline";
+  if (!isConfigured) return "Cloud Not Set";
+  if (!cloudSyncEnabled) return "Sync Paused";
+  if (syncState === "syncing") return "Syncing";
+  if (syncState === "error") return "Sync Error";
+  if (syncState === "paused") return "Sync Paused";
+  if (syncState === "synced") return "Synced";
+
+  return "Cloud Ready";
+}
+
+function shouldToastCloudMessage(message) {
+  const text = String(message || "").toLowerCase();
+
+  if (!text) return false;
+  if (text.includes("polling sync")) return false;
+  if (text.includes("reactive sync")) return false;
+  if (text.includes("realtime update received")) return false;
+  if (text.includes("auto-save") && (text.includes("synced") || text.includes("syncing"))) return false;
+
+  return (
+    text.includes("failed") ||
+    text.includes("error") ||
+    text.includes("not configured") ||
+    text.includes("manual") ||
+    text.includes("paused") ||
+    text.includes("enabled") ||
+    text.includes("connected")
+  );
+}
+
 export default function App() {
   const backupInputRef = useRef(null);
+  const cloudPushTimersRef = useRef({});
+  const applyingRemoteUpdateRef = useRef(false);
+  const cloudPollingInFlightRef = useRef(false);
+  const lastLocalCloudPushAtRef = useRef(0);
+  const toastTimersRef = useRef({});
 
   const [activePage, setActivePage] = useState("dashboard");
   const [quotes, setQuotes] = useState(() => getInitialState("overkill_quotes", []));
@@ -696,6 +776,33 @@ export default function App() {
   const [timerTick, setTimerTick] = useState(0);
   const [globalSearch, setGlobalSearch] = useState("");
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [cloudSyncEnabled, setCloudSyncEnabledState] = useState(() =>
+    getInitialState(BACKUP_KEYS.cloudSyncEnabled, true)
+  );
+  const [cloudSyncMessage, setCloudSyncMessage] = useState(
+    isSupabaseConfigured ? "Cloud sync ready." : "Supabase not configured."
+  );
+  const [cloudSyncLastAt, setCloudSyncLastAt] = useState("");
+  const [snapshots, setSnapshots] = useState(() =>
+    getInitialState(BACKUP_KEYS.snapshots, [])
+  );
+  const [snapshotMessage, setSnapshotMessage] = useState("");
+  const [trashRecords, setTrashRecords] = useState(() =>
+    getInitialState(BACKUP_KEYS.trash, [])
+  );
+  const [trashMessage, setTrashMessage] = useState("");
+  const [recordHistory, setRecordHistory] = useState(() =>
+    getInitialState(BACKUP_KEYS.recordHistory, [])
+  );
+  const [conflictWarnings, setConflictWarnings] = useState([]);
+  const [cloudSyncState, setCloudSyncState] = useState(() =>
+    isSupabaseConfigured ? "ready" : "error"
+  );
+  const [isOnline, setIsOnline] = useState(() =>
+    typeof navigator === "undefined" ? true : navigator.onLine
+  );
+  const [toasts, setToasts] = useState([]);
 
   const editingQuote = quotes.find((quote) => quote.id === editingQuoteId) || null;
 
@@ -732,6 +839,570 @@ export default function App() {
 
     return () => window.clearInterval(intervalId);
   }, [globalOpenTimers.length]);
+
+  function addToast(message, type = "info", duration = 4200) {
+    const id = crypto.randomUUID();
+
+    setToasts((current) => [
+      { id, message, type, createdAt: new Date().toISOString() },
+      ...current,
+    ].slice(0, 4));
+
+    window.clearTimeout(toastTimersRef.current[id]);
+    toastTimersRef.current[id] = window.setTimeout(() => {
+      setToasts((current) => current.filter((toast) => toast.id !== id));
+      delete toastTimersRef.current[id];
+    }, duration);
+  }
+
+  function removeToast(toastId) {
+    window.clearTimeout(toastTimersRef.current[toastId]);
+    delete toastTimersRef.current[toastId];
+    setToasts((current) => current.filter((toast) => toast.id !== toastId));
+  }
+
+  function markCloudSync(message, forcedType = null) {
+    const nextState = forcedType || getCloudSyncStateFromMessage(message, isOnline);
+
+    setCloudSyncMessage(message);
+    setCloudSyncLastAt(new Date().toLocaleTimeString());
+    setCloudSyncState(nextState);
+
+    if (shouldToastCloudMessage(message)) {
+      const toastType = nextState === "error" || nextState === "offline" ? "error" : nextState === "syncing" ? "info" : "success";
+      addToast(message, toastType);
+    }
+  }
+
+  useEffect(() => {
+    function handleOnline() {
+      setIsOnline(true);
+      setCloudSyncState(isSupabaseConfigured && cloudSyncEnabled ? "syncing" : "ready");
+      addToast("Back online. Cloud sync will resume automatically.", "success");
+      if (isSupabaseConfigured && cloudSyncEnabled) {
+        window.setTimeout(() => forceCloudSync("Back online sync"), 250);
+      }
+    }
+
+    function handleOffline() {
+      setIsOnline(false);
+      setCloudSyncState("offline");
+      addToast("Offline mode. Changes will stay local until connection returns.", "error", 6500);
+    }
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+      Object.values(toastTimersRef.current).forEach((timerId) => window.clearTimeout(timerId));
+    };
+  }, [cloudSyncEnabled]);
+
+  function setCloudSyncEnabled(enabled) {
+    setCloudSyncEnabledState(enabled);
+    localStorage.setItem(BACKUP_KEYS.cloudSyncEnabled, JSON.stringify(enabled));
+
+    if (!enabled) {
+      markCloudSync("Auto cloud sync paused.");
+      return;
+    }
+
+    markCloudSync(
+      isSupabaseConfigured
+        ? "Auto cloud sync enabled."
+        : "Auto sync enabled, but Supabase is not configured."
+    );
+  }
+
+  async function pushMiscDataToCloud(reason = "Auto-sync", force = false) {
+    if (!isSupabaseConfigured || !supabase) return;
+    if (!cloudSyncEnabled && !force) return;
+    if (applyingRemoteUpdateRef.current && !force) return;
+
+    const payload = {
+      shippingEstimates,
+      customerOverrides,
+      suppliers,
+      usedRecordNumbers,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const { error } = await supabase.from(CLOUD_TABLES.settings).upsert(
+      {
+        id: CLOUD_MISC_SETTINGS_ID,
+        payload,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "id" }
+    );
+
+    if (error) throw error;
+
+    markCloudSync(`${reason}: misc data synced.`);
+  }
+
+  async function pullMiscDataFromCloud() {
+    if (!isSupabaseConfigured || !supabase) return {};
+
+    const { data, error } = await supabase
+      .from(CLOUD_TABLES.settings)
+      .select("payload,updated_at")
+      .eq("id", CLOUD_MISC_SETTINGS_ID)
+      .maybeSingle();
+
+    if (error) throw error;
+
+    return data?.payload || {};
+  }
+
+  function queueCloudCollectionPush(collectionKey, tableName, records, reason = "Auto-sync") {
+    if (!isOnline) {
+      setCloudSyncState("offline");
+      setCloudSyncMessage("Offline mode. Local changes are waiting to sync.");
+      return;
+    }
+
+    if (!isSupabaseConfigured || !cloudSyncEnabled) return;
+    if (applyingRemoteUpdateRef.current) return;
+
+    window.clearTimeout(cloudPushTimersRef.current[collectionKey]);
+
+    cloudPushTimersRef.current[collectionKey] = window.setTimeout(async () => {
+      try {
+        markCloudSync(`${reason}: syncing ${collectionKey}...`);
+        await pushCollectionToCloud(tableName, records || []);
+        markCloudSync(`${reason}: ${collectionKey} synced.`);
+      } catch (error) {
+        console.error(error);
+        markCloudSync(`${reason}: ${collectionKey} sync failed — ${error?.message || "unknown error"}.`);
+      }
+    }, CLOUD_SYNC_DEBOUNCE_MS);
+  }
+
+  function queueCloudMiscPush(reason = "Auto-sync") {
+    if (!isOnline) {
+      setCloudSyncState("offline");
+      setCloudSyncMessage("Offline mode. Local changes are waiting to sync.");
+      return;
+    }
+
+    if (!isSupabaseConfigured || !cloudSyncEnabled) return;
+    if (applyingRemoteUpdateRef.current) return;
+
+    window.clearTimeout(cloudPushTimersRef.current.misc);
+
+    cloudPushTimersRef.current.misc = window.setTimeout(async () => {
+      try {
+        markCloudSync(`${reason}: syncing misc data...`);
+        await pushMiscDataToCloud(reason);
+      } catch (error) {
+        console.error(error);
+        markCloudSync(`${reason}: misc sync failed — ${error?.message || "unknown error"}.`);
+      }
+    }, CLOUD_SYNC_DEBOUNCE_MS);
+  }
+
+  async function refreshCloudCollection(collectionKey, tableName) {
+    if (!isSupabaseConfigured || !cloudSyncEnabled) return;
+
+    try {
+      applyingRemoteUpdateRef.current = true;
+      const cloudRecords = await pullCollectionFromCloud(tableName);
+
+      if (collectionKey === "quotes" && cloudRecords.some((record) => quotes.some((local) => local.id === record.id && local.updatedAt && record.updatedAt && local.updatedAt !== record.updatedAt))) {
+        addConflictWarning("quotes", "Quote record", "multiple");
+      }
+
+      if (collectionKey === "jobs" && cloudRecords.some((record) => jobs.some((local) => local.id === record.id && local.updatedAt && record.updatedAt && local.updatedAt !== record.updatedAt))) {
+        addConflictWarning("jobs", "Job record", "multiple");
+      }
+
+      if (collectionKey === "quotes") {
+        setQuotes(cloudRecords);
+        localStorage.setItem(BACKUP_KEYS.quotes, JSON.stringify(cloudRecords));
+      }
+
+      if (collectionKey === "jobs") {
+        setJobs(cloudRecords);
+        localStorage.setItem(BACKUP_KEYS.jobs, JSON.stringify(cloudRecords));
+      }
+
+      if (collectionKey === "inventoryItems") {
+        setInventoryItems(cloudRecords);
+        localStorage.setItem(BACKUP_KEYS.inventoryItems, JSON.stringify(cloudRecords));
+      }
+
+      if (collectionKey === "inventoryLogs") {
+        setInventoryLogs(cloudRecords);
+        localStorage.setItem(BACKUP_KEYS.inventoryLogs, JSON.stringify(cloudRecords));
+      }
+
+      if (collectionKey === "manualCustomers") {
+        setManualCustomers(cloudRecords);
+        localStorage.setItem(BACKUP_KEYS.manualCustomers, JSON.stringify(cloudRecords));
+      }
+
+      if (collectionKey === "expenses") {
+        setExpenses(cloudRecords);
+        localStorage.setItem(BACKUP_KEYS.expenses, JSON.stringify(cloudRecords));
+      }
+
+      markCloudSync(`Realtime update received: ${collectionKey}.`);
+    } catch (error) {
+      console.error(error);
+      markCloudSync(`Realtime refresh failed: ${error?.message || "unknown error"}.`);
+    } finally {
+      window.setTimeout(() => {
+        applyingRemoteUpdateRef.current = false;
+      }, 300);
+    }
+  }
+
+  async function refreshCloudMiscData() {
+    if (!isSupabaseConfigured || !cloudSyncEnabled) return;
+
+    try {
+      applyingRemoteUpdateRef.current = true;
+      const misc = await pullMiscDataFromCloud();
+
+      const nextShippingEstimates = Array.isArray(misc.shippingEstimates)
+        ? misc.shippingEstimates
+        : shippingEstimates;
+      const nextCustomerOverrides =
+        misc.customerOverrides && typeof misc.customerOverrides === "object"
+          ? misc.customerOverrides
+          : customerOverrides;
+      const nextSuppliers = Array.isArray(misc.suppliers) ? misc.suppliers : suppliers;
+      const nextUsedRecordNumbers = Array.isArray(misc.usedRecordNumbers)
+        ? misc.usedRecordNumbers
+        : usedRecordNumbers;
+
+      setShippingEstimates(nextShippingEstimates);
+      setCustomerOverrides(nextCustomerOverrides);
+      setSuppliers(nextSuppliers);
+      setUsedRecordNumbers(nextUsedRecordNumbers);
+    setTrashRecords(nextTrashRecords);
+
+      localStorage.setItem(BACKUP_KEYS.shippingEstimates, JSON.stringify(nextShippingEstimates));
+      localStorage.setItem(BACKUP_KEYS.customerOverrides, JSON.stringify(nextCustomerOverrides));
+      localStorage.setItem(BACKUP_KEYS.suppliers, JSON.stringify(nextSuppliers));
+      localStorage.setItem(BACKUP_KEYS.usedRecordNumbers, JSON.stringify(nextUsedRecordNumbers));
+
+      markCloudSync("Realtime update received: misc data.");
+    } catch (error) {
+      console.error(error);
+      markCloudSync(`Realtime misc refresh failed: ${error?.message || "unknown error"}.`);
+    } finally {
+      window.setTimeout(() => {
+        applyingRemoteUpdateRef.current = false;
+      }, 300);
+    }
+  }
+
+  async function pushLocalDataToCloud() {
+    if (!isSupabaseConfigured) {
+      markCloudSync("Supabase is not configured.");
+      return;
+    }
+
+    try {
+      markCloudSync("Manual push started...");
+
+      const results = await pushAllLocalDataToCloud({
+        quotes,
+        jobs,
+        inventoryItems,
+        inventoryLogs,
+        manualCustomers,
+        expenses,
+        settings: getBackupValue(BACKUP_KEYS.settings, null),
+      trashRecords: getBackupValue(BACKUP_KEYS.trash, []),
+      recordHistory: getBackupValue(BACKUP_KEYS.recordHistory, []),
+      });
+
+      await pushMiscDataToCloud("Manual push", true);
+
+      const pushedCount = results.reduce((sum, result) => sum + Number(result.pushed || 0), 0);
+      markCloudSync(`Manual push complete: ${pushedCount} records synced.`);
+    } catch (error) {
+      console.error(error);
+      markCloudSync(`Manual push failed: ${error?.message || "unknown error"}.`);
+    }
+  }
+
+  function forceCloudSync(reason = "Reactive sync") {
+    if (!isSupabaseConfigured || !cloudSyncEnabled) return;
+    if (applyingRemoteUpdateRef.current) return;
+
+    lastLocalCloudPushAtRef.current = Date.now();
+
+    queueCloudCollectionPush("quotes", CLOUD_TABLES.quotes, quotes, reason);
+    queueCloudCollectionPush("jobs", CLOUD_TABLES.jobs, jobs, reason);
+    queueCloudCollectionPush(
+      "inventoryItems",
+      CLOUD_TABLES.inventoryItems,
+      inventoryItems,
+      reason
+    );
+    queueCloudCollectionPush(
+      "inventoryLogs",
+      CLOUD_TABLES.inventoryLogs,
+      inventoryLogs,
+      reason
+    );
+    queueCloudCollectionPush(
+      "manualCustomers",
+      CLOUD_TABLES.customers,
+      manualCustomers,
+      reason
+    );
+    queueCloudCollectionPush("expenses", CLOUD_TABLES.expenses, expenses, reason);
+    queueCloudMiscPush(reason);
+  }
+
+  async function pullCloudDataSilently(reason = "Polling sync") {
+    if (!isSupabaseConfigured || !supabase || !cloudSyncEnabled) return;
+    if (cloudPollingInFlightRef.current) return;
+    if (applyingRemoteUpdateRef.current) return;
+
+    const recentlyPushed = Date.now() - lastLocalCloudPushAtRef.current;
+    if (recentlyPushed >= 0 && recentlyPushed < CLOUD_RECENT_LOCAL_PUSH_GRACE_MS) {
+      return;
+    }
+
+    try {
+      cloudPollingInFlightRef.current = true;
+      applyingRemoteUpdateRef.current = true;
+
+      const cloudData = await pullAllCloudData();
+      const misc = await pullMiscDataFromCloud();
+
+      const nextQuotes = Array.isArray(cloudData.quotes) ? cloudData.quotes : [];
+      const nextJobs = Array.isArray(cloudData.jobs) ? cloudData.jobs : [];
+      const nextInventoryItems = Array.isArray(cloudData.inventoryItems)
+        ? cloudData.inventoryItems
+        : [];
+      const nextInventoryLogs = Array.isArray(cloudData.inventoryLogs)
+        ? cloudData.inventoryLogs
+        : [];
+      const nextManualCustomers = Array.isArray(cloudData.manualCustomers)
+        ? cloudData.manualCustomers
+        : [];
+      const nextExpenses = Array.isArray(cloudData.expenses) ? cloudData.expenses : [];
+
+      const nextShippingEstimates = Array.isArray(misc.shippingEstimates)
+        ? misc.shippingEstimates
+        : shippingEstimates;
+      const nextCustomerOverrides =
+        misc.customerOverrides && typeof misc.customerOverrides === "object"
+          ? misc.customerOverrides
+          : customerOverrides;
+      const nextSuppliers = Array.isArray(misc.suppliers) ? misc.suppliers : suppliers;
+      const nextUsedRecordNumbers = Array.isArray(misc.usedRecordNumbers)
+        ? misc.usedRecordNumbers
+        : usedRecordNumbers;
+
+      setQuotes(nextQuotes);
+      setJobs(nextJobs);
+      setInventoryItems(nextInventoryItems);
+      setInventoryLogs(nextInventoryLogs);
+      setManualCustomers(nextManualCustomers);
+      setExpenses(nextExpenses);
+      setShippingEstimates(nextShippingEstimates);
+      setCustomerOverrides(nextCustomerOverrides);
+      setSuppliers(nextSuppliers);
+      setUsedRecordNumbers(nextUsedRecordNumbers);
+
+      localStorage.setItem(BACKUP_KEYS.quotes, JSON.stringify(nextQuotes));
+      localStorage.setItem(BACKUP_KEYS.jobs, JSON.stringify(nextJobs));
+      localStorage.setItem(BACKUP_KEYS.inventoryItems, JSON.stringify(nextInventoryItems));
+      localStorage.setItem(BACKUP_KEYS.inventoryLogs, JSON.stringify(nextInventoryLogs));
+      localStorage.setItem(BACKUP_KEYS.manualCustomers, JSON.stringify(nextManualCustomers));
+      localStorage.setItem(BACKUP_KEYS.expenses, JSON.stringify(nextExpenses));
+      localStorage.setItem(BACKUP_KEYS.shippingEstimates, JSON.stringify(nextShippingEstimates));
+      localStorage.setItem(BACKUP_KEYS.customerOverrides, JSON.stringify(nextCustomerOverrides));
+      localStorage.setItem(BACKUP_KEYS.suppliers, JSON.stringify(nextSuppliers));
+      localStorage.setItem(BACKUP_KEYS.usedRecordNumbers, JSON.stringify(nextUsedRecordNumbers));
+
+      markCloudSync(`${reason}: cloud data refreshed.`);
+    } catch (error) {
+      console.error(error);
+      markCloudSync(`${reason} failed: ${error?.message || "unknown error"}.`);
+    } finally {
+      window.setTimeout(() => {
+        applyingRemoteUpdateRef.current = false;
+        cloudPollingInFlightRef.current = false;
+      }, 800);
+    }
+  }
+
+  async function pullCloudDataToLocal() {
+    if (!isSupabaseConfigured) {
+      markCloudSync("Supabase is not configured.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Pull cloud data to this device? This will replace local app data in this browser."
+    );
+
+    if (!confirmed) return;
+
+    try {
+      markCloudSync("Manual pull started...");
+      applyingRemoteUpdateRef.current = true;
+
+      const cloudData = await pullAllCloudData();
+      const misc = await pullMiscDataFromCloud();
+
+      const nextQuotes = Array.isArray(cloudData.quotes) ? cloudData.quotes : [];
+      const nextJobs = Array.isArray(cloudData.jobs) ? cloudData.jobs : [];
+      const nextInventoryItems = Array.isArray(cloudData.inventoryItems)
+        ? cloudData.inventoryItems
+        : [];
+      const nextInventoryLogs = Array.isArray(cloudData.inventoryLogs)
+        ? cloudData.inventoryLogs
+        : [];
+      const nextManualCustomers = Array.isArray(cloudData.manualCustomers)
+        ? cloudData.manualCustomers
+        : [];
+      const nextExpenses = Array.isArray(cloudData.expenses) ? cloudData.expenses : [];
+
+      const nextShippingEstimates = Array.isArray(misc.shippingEstimates)
+        ? misc.shippingEstimates
+        : [];
+      const nextCustomerOverrides =
+        misc.customerOverrides && typeof misc.customerOverrides === "object"
+          ? misc.customerOverrides
+          : {};
+      const nextSuppliers = Array.isArray(misc.suppliers) ? misc.suppliers : [];
+      const nextUsedRecordNumbers = Array.isArray(misc.usedRecordNumbers)
+        ? misc.usedRecordNumbers
+        : [];
+
+      setQuotes(nextQuotes);
+      setJobs(nextJobs);
+      setInventoryItems(nextInventoryItems);
+      setInventoryLogs(nextInventoryLogs);
+      setManualCustomers(nextManualCustomers);
+      setExpenses(nextExpenses);
+      setShippingEstimates(nextShippingEstimates);
+      setCustomerOverrides(nextCustomerOverrides);
+      setSuppliers(nextSuppliers);
+      setUsedRecordNumbers(nextUsedRecordNumbers);
+
+      localStorage.setItem(BACKUP_KEYS.quotes, JSON.stringify(nextQuotes));
+      localStorage.setItem(BACKUP_KEYS.jobs, JSON.stringify(nextJobs));
+      localStorage.setItem(BACKUP_KEYS.inventoryItems, JSON.stringify(nextInventoryItems));
+      localStorage.setItem(BACKUP_KEYS.inventoryLogs, JSON.stringify(nextInventoryLogs));
+      localStorage.setItem(BACKUP_KEYS.manualCustomers, JSON.stringify(nextManualCustomers));
+      localStorage.setItem(BACKUP_KEYS.expenses, JSON.stringify(nextExpenses));
+      localStorage.setItem(BACKUP_KEYS.shippingEstimates, JSON.stringify(nextShippingEstimates));
+      localStorage.setItem(BACKUP_KEYS.customerOverrides, JSON.stringify(nextCustomerOverrides));
+      localStorage.setItem(BACKUP_KEYS.suppliers, JSON.stringify(nextSuppliers));
+      localStorage.setItem(BACKUP_KEYS.usedRecordNumbers, JSON.stringify(nextUsedRecordNumbers));
+
+      markCloudSync("Manual pull complete.");
+    } catch (error) {
+      console.error(error);
+      markCloudSync(`Manual pull failed: ${error?.message || "unknown error"}.`);
+    } finally {
+      window.setTimeout(() => {
+        applyingRemoteUpdateRef.current = false;
+      }, 500);
+    }
+  }
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !supabase || !cloudSyncEnabled) {
+      markCloudSync(
+        isSupabaseConfigured
+          ? "Auto cloud sync paused."
+          : "Supabase not configured."
+      );
+      return undefined;
+    }
+
+    markCloudSync("Realtime cloud sync connected.");
+
+    const channel = supabase
+      .channel("overkill-phase-2-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: CLOUD_TABLES.quotes },
+        () => refreshCloudCollection("quotes", CLOUD_TABLES.quotes)
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: CLOUD_TABLES.jobs },
+        () => refreshCloudCollection("jobs", CLOUD_TABLES.jobs)
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: CLOUD_TABLES.inventoryItems },
+        () => refreshCloudCollection("inventoryItems", CLOUD_TABLES.inventoryItems)
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: CLOUD_TABLES.inventoryLogs },
+        () => refreshCloudCollection("inventoryLogs", CLOUD_TABLES.inventoryLogs)
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: CLOUD_TABLES.customers },
+        () => refreshCloudCollection("manualCustomers", CLOUD_TABLES.customers)
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: CLOUD_TABLES.expenses },
+        () => refreshCloudCollection("expenses", CLOUD_TABLES.expenses)
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: CLOUD_TABLES.settings },
+        () => refreshCloudMiscData()
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") markCloudSync("Realtime cloud sync connected.");
+        if (status === "CHANNEL_ERROR") markCloudSync("Realtime cloud sync error.");
+        if (status === "TIMED_OUT") markCloudSync("Realtime cloud sync timed out.");
+      });
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [cloudSyncEnabled]);
+
+  useEffect(() => {
+    if (!cloudSyncEnabled || !isSupabaseConfigured) return;
+    if (applyingRemoteUpdateRef.current) return;
+
+    forceCloudSync("Reactive sync");
+  }, [
+    quotes,
+    jobs,
+    inventoryItems,
+    inventoryLogs,
+    manualCustomers,
+    expenses,
+    shippingEstimates,
+    customerOverrides,
+    suppliers,
+    usedRecordNumbers,
+    cloudSyncEnabled,
+  ]);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !supabase || !cloudSyncEnabled) return undefined;
+
+    const intervalId = window.setInterval(() => {
+      pullCloudDataSilently("Polling sync");
+    }, CLOUD_POLL_INTERVAL_MS);
+
+    return () => window.clearInterval(intervalId);
+  }, [cloudSyncEnabled]);
 
   function stopGlobalTimer(jobId, timerKey) {
     const job = jobs.find((item) => item.id === jobId);
@@ -784,6 +1455,10 @@ export default function App() {
     localStorage.setItem("overkill_quotes", JSON.stringify(nextQuotes));
     localStorage.setItem("overkill_jobs", JSON.stringify(nextJobs));
     localStorage.setItem("overkill_used_record_numbers", JSON.stringify(nextUsedNumbers));
+
+    queueCloudCollectionPush("quotes", CLOUD_TABLES.quotes, nextQuotes, "Auto-save");
+    queueCloudCollectionPush("jobs", CLOUD_TABLES.jobs, nextJobs, "Auto-save");
+    queueCloudMiscPush("Auto-save");
   }
 
   function saveInventory(nextItems, nextLogs = inventoryLogs) {
@@ -791,6 +1466,9 @@ export default function App() {
     setInventoryLogs(nextLogs);
     localStorage.setItem("overkill_inventory_items", JSON.stringify(nextItems));
     localStorage.setItem("overkill_inventory_logs", JSON.stringify(nextLogs));
+
+    queueCloudCollectionPush("inventoryItems", CLOUD_TABLES.inventoryItems, nextItems, "Auto-save");
+    queueCloudCollectionPush("inventoryLogs", CLOUD_TABLES.inventoryLogs, nextLogs, "Auto-save");
   }
 
   function addInventoryItem(itemData) {
@@ -953,6 +1631,8 @@ export default function App() {
       templates: getBackupValue(BACKUP_KEYS.templates, []),
       usedRecordNumbers: getBackupValue(BACKUP_KEYS.usedRecordNumbers, []),
       settings: getBackupValue(BACKUP_KEYS.settings, null),
+      trashRecords: getBackupValue(BACKUP_KEYS.trash, []),
+      recordHistory: getBackupValue(BACKUP_KEYS.recordHistory, []),
     },
   };
 
@@ -1078,6 +1758,9 @@ export default function App() {
     const nextUsedRecordNumbers = Array.isArray(data.usedRecordNumbers)
       ? data.usedRecordNumbers
       : [];
+    const nextTrashRecords = Array.isArray(data.trashRecords)
+      ? data.trashRecords
+      : [];
 
     localStorage.setItem(BACKUP_KEYS.quotes, JSON.stringify(nextQuotes));
     localStorage.setItem(BACKUP_KEYS.jobs, JSON.stringify(nextJobs));
@@ -1128,6 +1811,7 @@ export default function App() {
       BACKUP_KEYS.usedRecordNumbers,
       JSON.stringify(nextUsedRecordNumbers)
     );
+    localStorage.setItem(BACKUP_KEYS.trash, JSON.stringify(nextTrashRecords));
 
     if (data.settings) {
       localStorage.setItem(BACKUP_KEYS.settings, JSON.stringify(data.settings));
@@ -1151,10 +1835,15 @@ export default function App() {
     setEditingQuoteId(null);
     setImportMessage("");
     setBackupMessage("Backup restored. Reloading app data...");
+    window.setTimeout(() => {
+      if (cloudSyncEnabled && isSupabaseConfigured) {
+        pushLocalDataToCloud();
+      }
+    }, 300);
 
     setTimeout(() => {
       window.location.reload();
-    }, 500);
+    }, 700);
   } catch (error) {
     console.error(error);
     window.alert(
@@ -1176,6 +1865,7 @@ export default function App() {
   function saveShippingEstimates(nextEstimates) {
     setShippingEstimates(nextEstimates);
     localStorage.setItem("overkill_shipping_estimates", JSON.stringify(nextEstimates));
+    queueCloudMiscPush("Auto-save");
   }
 
   function addShippingEstimate(estimateData) {
@@ -1274,11 +1964,13 @@ export default function App() {
   function saveCustomerOverrides(nextOverrides) {
     setCustomerOverrides(nextOverrides);
     localStorage.setItem("overkill_customer_overrides", JSON.stringify(nextOverrides));
+    queueCloudMiscPush("Auto-save");
   }
 
   function saveManualCustomers(nextCustomers) {
     setManualCustomers(nextCustomers);
     localStorage.setItem("overkill_manual_customers", JSON.stringify(nextCustomers));
+    queueCloudCollectionPush("manualCustomers", CLOUD_TABLES.customers, nextCustomers, "Auto-save");
   }
 
   function updateCustomerOverride(customerKey, customerData) {
@@ -1369,11 +2061,23 @@ export default function App() {
       const nextQuotes = quotes.map((quote) => {
         if (quote.id !== editingId) return quote;
 
-        return {
+        const updatedQuote = {
           ...quote,
           ...quoteData,
           updatedAt: new Date().toISOString(),
         };
+
+        addRecordHistoryEntry({
+          recordType: "quote",
+          recordId: quote.id,
+          displayNumber: quote.quoteNumber,
+          action: "Edited quote",
+          before: quote,
+          after: updatedQuote,
+          summary: "Quote edited from calculator.",
+        });
+
+        return updatedQuote;
       });
 
       setQuotes(nextQuotes);
@@ -1422,13 +2126,25 @@ export default function App() {
     const nextQuotes = quotes.map((quote) => {
       if (quote.id !== quoteId) return quote;
 
-      return {
+      const updatedQuote = {
         ...quote,
         ...updates,
         status: updates.quoteStatus || updates.status || quote.quoteStatus || quote.status || "Draft Quote",
         quoteStatus: updates.quoteStatus || updates.status || quote.quoteStatus || quote.status || "Draft Quote",
         updatedAt: new Date().toISOString(),
       };
+
+      addRecordHistoryEntry({
+        recordType: "quote",
+        recordId: quote.id,
+        displayNumber: quote.quoteNumber,
+        action: "Updated quote workflow",
+        before: quote,
+        after: updatedQuote,
+        summary: `Quote status updated to ${updatedQuote.quoteStatus || updatedQuote.status}.`,
+      });
+
+      return updatedQuote;
     });
 
     setQuotes(nextQuotes);
@@ -1484,6 +2200,8 @@ export default function App() {
     const shouldReuseNumber = window.confirm(
       `Do you want to reuse ${quote.quoteNumber || "this quote number"} later?\n\nOK = release/reuse the number\nCancel = keep the number reserved`
     );
+
+    moveRecordToTrash("quote", quote);
 
     const nextQuotes = quotes.filter((item) => item.id !== quoteId);
     let nextUsedNumbers = usedRecordNumbers;
@@ -1671,11 +2389,23 @@ export default function App() {
     const nextJobs = jobs.map((job) => {
       if (job.id !== jobId) return job;
 
-      return {
+      const updatedJob = {
         ...job,
         ...updates,
         updatedAt: new Date().toISOString(),
       };
+
+      addRecordHistoryEntry({
+        recordType: "job",
+        recordId: job.id,
+        displayNumber: job.jobNumber,
+        action: "Updated job",
+        before: job,
+        after: updatedJob,
+        summary: "Job record updated.",
+      });
+
+      return updatedJob;
     });
 
     setJobs(nextJobs);
@@ -1780,6 +2510,8 @@ export default function App() {
     );
 
     if (!confirmed) return;
+
+    moveRecordToTrash("job", job);
 
     const nextJobs = jobs.filter((item) => item.id !== jobId);
 
@@ -1966,17 +2698,20 @@ export default function App() {
     setActivePage(result.page);
     setGlobalSearch("");
     setGlobalSearchOpen(false);
+    setMobileSidebarOpen(false);
   }
 
 
   function saveExpenses(nextExpenses) {
     setExpenses(nextExpenses);
     localStorage.setItem(BACKUP_KEYS.expenses, JSON.stringify(nextExpenses));
+    queueCloudCollectionPush("expenses", CLOUD_TABLES.expenses, nextExpenses, "Auto-save");
   }
 
   function saveSuppliers(nextSuppliers) {
     setSuppliers(nextSuppliers);
     localStorage.setItem(BACKUP_KEYS.suppliers, JSON.stringify(nextSuppliers));
+    queueCloudMiscPush("Auto-save");
   }
 
   function addExpense(expenseData) {
@@ -2069,6 +2804,407 @@ export default function App() {
 
     saveSuppliers(suppliers.filter((item) => item.id !== supplierId));
   }
+
+
+
+
+  function saveRecordHistory(nextHistory) {
+    const trimmed = nextHistory.slice(0, 500);
+    setRecordHistory(trimmed);
+    localStorage.setItem(BACKUP_KEYS.recordHistory, JSON.stringify(trimmed));
+  }
+
+  function addRecordHistoryEntry({
+    recordType,
+    recordId,
+    displayNumber,
+    action,
+    before = null,
+    after = null,
+    summary = "",
+  }) {
+    if (!recordType || !recordId || !action) return;
+
+    const entry = {
+      id: crypto.randomUUID(),
+      recordType,
+      recordId,
+      displayNumber: displayNumber || "Record",
+      action,
+      summary,
+      createdAt: new Date().toISOString(),
+      before,
+      after,
+    };
+
+    saveRecordHistory([entry, ...recordHistory]);
+
+    if (typeof addToast === "function") {
+      addToast("info", "Version saved", `${entry.displayNumber}: ${action}`);
+    }
+  }
+
+  function restoreRecordHistoryEntry(historyId) {
+    const entry = recordHistory.find((item) => item.id === historyId);
+    if (!entry?.before) return;
+
+    const confirmed = window.confirm(
+      `Restore ${entry.displayNumber} to the version before "${entry.action}"?`
+    );
+
+    if (!confirmed) return;
+
+    const restored = {
+      ...entry.before,
+      restoredFromHistoryId: entry.id,
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (entry.recordType === "quote") {
+      const nextQuotes = quotes.map((quote) =>
+        quote.id === entry.recordId ? restored : quote
+      );
+      setQuotes(nextQuotes);
+      saveToStorage(nextQuotes, jobs, usedRecordNumbers);
+    }
+
+    if (entry.recordType === "job") {
+      const nextJobs = jobs.map((job) =>
+        job.id === entry.recordId ? restored : job
+      );
+      setJobs(nextJobs);
+      saveToStorage(quotes, nextJobs, usedRecordNumbers);
+    }
+
+    if (entry.recordType === "inventoryItem") {
+      const nextItems = inventoryItems.map((item) =>
+        item.id === entry.recordId ? restored : item
+      );
+      saveInventory(nextItems);
+    }
+
+    if (entry.recordType === "manualCustomer") {
+      const nextCustomers = manualCustomers.map((customer) =>
+        customer.id === entry.recordId || customer.key === entry.recordId
+          ? restored
+          : customer
+      );
+      saveManualCustomers(nextCustomers);
+    }
+
+    if (entry.recordType === "expense") {
+      const nextExpenses = expenses.map((expense) =>
+        expense.id === entry.recordId ? restored : expense
+      );
+      saveExpenses(nextExpenses);
+    }
+
+    if (typeof addToast === "function") {
+      addToast("success", "Version restored", entry.displayNumber);
+    }
+  }
+
+  function clearRecordHistory() {
+    if (recordHistory.length === 0) return;
+
+    const confirmed = window.confirm(
+      `Clear all ${recordHistory.length} version history record(s)?`
+    );
+
+    if (!confirmed) return;
+
+    saveRecordHistory([]);
+  }
+
+  function addConflictWarning(collectionKey, title, recordId) {
+    const warning = {
+      id: crypto.randomUUID(),
+      collectionKey,
+      title: title || "Record",
+      recordId,
+      detectedAt: new Date().toISOString(),
+      message: "Cloud and local versions changed close together. Review this record if something looks off.",
+    };
+
+    setConflictWarnings((current) => [warning, ...current].slice(0, 20));
+  }
+
+  function dismissConflictWarning(warningId) {
+    setConflictWarnings((current) =>
+      current.filter((warning) => warning.id !== warningId)
+    );
+  }
+
+  function clearConflictWarnings() {
+    setConflictWarnings([]);
+  }
+
+
+  function saveTrashRecords(nextTrashRecords) {
+    setTrashRecords(nextTrashRecords);
+    localStorage.setItem(BACKUP_KEYS.trash, JSON.stringify(nextTrashRecords));
+
+    if (typeof addToast === "function") {
+      addToast("info", "Trash updated", `${nextTrashRecords.length} recoverable record(s).`);
+    }
+  }
+
+  function moveRecordToTrash(recordType, record) {
+    if (!record?.id) return;
+
+    const trashRecord = {
+      id: crypto.randomUUID(),
+      recordType,
+      recordId: record.id,
+      recordNumber: record.recordNumber || null,
+      displayNumber:
+        record.quoteNumber ||
+        record.jobNumber ||
+        record.invoiceNumber ||
+        record.expenseNumber ||
+        record.name ||
+        "Deleted Record",
+      title: record.jobName || record.customerName || record.name || "Deleted Record",
+      deletedAt: new Date().toISOString(),
+      restoreHint:
+        recordType === "quote"
+          ? "Restores to Quotes."
+          : recordType === "job"
+            ? "Restores to Jobs."
+            : "Restores to original area.",
+      payload: record,
+    };
+
+    saveTrashRecords([trashRecord, ...trashRecords].slice(0, 100));
+    setTrashMessage(`${trashRecord.displayNumber} moved to trash.`);
+  }
+
+  function restoreTrashRecord(trashId) {
+    const trashRecord = trashRecords.find((item) => item.id === trashId);
+    if (!trashRecord?.payload) return;
+
+    const now = new Date().toISOString();
+
+    if (trashRecord.recordType === "quote") {
+      const restoredQuote = {
+        ...trashRecord.payload,
+        restoredAt: now,
+        updatedAt: now,
+      };
+
+      const nextQuotes = [restoredQuote, ...quotes.filter((quote) => quote.id !== restoredQuote.id)];
+      setQuotes(nextQuotes);
+      saveToStorage(nextQuotes, jobs, usedRecordNumbers);
+    }
+
+    if (trashRecord.recordType === "job") {
+      const restoredJob = {
+        ...trashRecord.payload,
+        restoredAt: now,
+        archived: Boolean(trashRecord.payload.archived),
+        updatedAt: now,
+      };
+
+      const nextJobs = [restoredJob, ...jobs.filter((job) => job.id !== restoredJob.id)];
+      setJobs(nextJobs);
+      saveToStorage(quotes, nextJobs, usedRecordNumbers);
+    }
+
+    saveTrashRecords(trashRecords.filter((item) => item.id !== trashId));
+    setTrashMessage(`${trashRecord.displayNumber} restored.`);
+
+    if (typeof addToast === "function") {
+      addToast("success", "Record restored", trashRecord.displayNumber);
+    }
+  }
+
+  function permanentlyDeleteTrashRecord(trashId) {
+    const trashRecord = trashRecords.find((item) => item.id === trashId);
+    if (!trashRecord) return;
+
+    const confirmed = window.confirm(
+      `Permanently delete ${trashRecord.displayNumber}? This cannot be undone.`
+    );
+
+    if (!confirmed) return;
+
+    saveTrashRecords(trashRecords.filter((item) => item.id !== trashId));
+    setTrashMessage(`${trashRecord.displayNumber} permanently deleted.`);
+  }
+
+  function emptyTrash() {
+    if (trashRecords.length === 0) return;
+
+    const confirmed = window.confirm(
+      `Permanently delete all ${trashRecords.length} trash record(s)? This cannot be undone.`
+    );
+
+    if (!confirmed) return;
+
+    saveTrashRecords([]);
+    setTrashMessage("Trash emptied.");
+  }
+
+
+  function getSnapshotPayload() {
+    return {
+      app: "overkill-solutions-app",
+      version: APP_VERSION,
+      snapshotAt: new Date().toISOString(),
+      data: {
+        quotes,
+        jobs,
+        shippingEstimates,
+        customerOverrides,
+        manualCustomers,
+        inventoryItems,
+        inventoryLogs,
+        expenses,
+        suppliers,
+        usedRecordNumbers,
+        settings: getBackupValue(BACKUP_KEYS.settings, null),
+      trashRecords: getBackupValue(BACKUP_KEYS.trash, []),
+      recordHistory: getBackupValue(BACKUP_KEYS.recordHistory, []),
+      },
+    };
+  }
+
+  function saveSnapshots(nextSnapshots) {
+    const trimmed = nextSnapshots.slice(0, 25);
+    setSnapshots(trimmed);
+    localStorage.setItem(BACKUP_KEYS.snapshots, JSON.stringify(trimmed));
+  }
+
+  async function createCloudSnapshot(label = "Manual snapshot") {
+    try {
+      const snapshot = {
+        id: crypto.randomUUID(),
+        label,
+        createdAt: new Date().toISOString(),
+        source: isSupabaseConfigured ? "local+cloud-ready" : "local-only",
+        payload: getSnapshotPayload(),
+      };
+
+      const nextSnapshots = [snapshot, ...snapshots];
+      saveSnapshots(nextSnapshots);
+
+      if (isSupabaseConfigured && supabase) {
+        const { error } = await supabase.from(CLOUD_TABLES.settings).upsert(
+          {
+            id: `snapshot_${snapshot.id}`,
+            payload: snapshot,
+            updated_at: snapshot.createdAt,
+          },
+          { onConflict: "id" }
+        );
+
+        if (error) throw error;
+      }
+
+      setSnapshotMessage(`Snapshot saved: ${label}.`);
+      if (typeof addToast === "function") {
+        addToast("success", "Snapshot saved", label);
+      }
+    } catch (error) {
+      console.error(error);
+      setSnapshotMessage(`Snapshot failed: ${error?.message || "unknown error"}.`);
+      if (typeof addToast === "function") {
+        addToast("error", "Snapshot failed", error?.message || "Unknown error");
+      }
+    }
+  }
+
+  function restoreSnapshot(snapshotId) {
+    const snapshot = snapshots.find((item) => item.id === snapshotId);
+    if (!snapshot?.payload?.data) return;
+
+    const confirmed = window.confirm(
+      `Restore snapshot "${snapshot.label}"? This will replace current local app data on this device.`
+    );
+
+    if (!confirmed) return;
+
+    const data = snapshot.payload.data;
+
+    const nextQuotes = Array.isArray(data.quotes) ? data.quotes : [];
+    const nextJobs = Array.isArray(data.jobs) ? data.jobs : [];
+    const nextShippingEstimates = Array.isArray(data.shippingEstimates) ? data.shippingEstimates : [];
+    const nextCustomerOverrides =
+      data.customerOverrides && typeof data.customerOverrides === "object"
+        ? data.customerOverrides
+        : {};
+    const nextManualCustomers = Array.isArray(data.manualCustomers) ? data.manualCustomers : [];
+    const nextInventoryItems = Array.isArray(data.inventoryItems) ? data.inventoryItems : [];
+    const nextInventoryLogs = Array.isArray(data.inventoryLogs) ? data.inventoryLogs : [];
+    const nextExpenses = Array.isArray(data.expenses) ? data.expenses : [];
+    const nextSuppliers = Array.isArray(data.suppliers) ? data.suppliers : [];
+    const nextUsedRecordNumbers = Array.isArray(data.usedRecordNumbers) ? data.usedRecordNumbers : [];
+
+    setQuotes(nextQuotes);
+    setJobs(nextJobs);
+    setShippingEstimates(nextShippingEstimates);
+    setCustomerOverrides(nextCustomerOverrides);
+    setManualCustomers(nextManualCustomers);
+    setInventoryItems(nextInventoryItems);
+    setInventoryLogs(nextInventoryLogs);
+    setExpenses(nextExpenses);
+    setSuppliers(nextSuppliers);
+    setUsedRecordNumbers(nextUsedRecordNumbers);
+
+    localStorage.setItem(BACKUP_KEYS.quotes, JSON.stringify(nextQuotes));
+    localStorage.setItem(BACKUP_KEYS.jobs, JSON.stringify(nextJobs));
+    localStorage.setItem(BACKUP_KEYS.shippingEstimates, JSON.stringify(nextShippingEstimates));
+    localStorage.setItem(BACKUP_KEYS.customerOverrides, JSON.stringify(nextCustomerOverrides));
+    localStorage.setItem(BACKUP_KEYS.manualCustomers, JSON.stringify(nextManualCustomers));
+    localStorage.setItem(BACKUP_KEYS.inventoryItems, JSON.stringify(nextInventoryItems));
+    localStorage.setItem(BACKUP_KEYS.inventoryLogs, JSON.stringify(nextInventoryLogs));
+    localStorage.setItem(BACKUP_KEYS.expenses, JSON.stringify(nextExpenses));
+    localStorage.setItem(BACKUP_KEYS.suppliers, JSON.stringify(nextSuppliers));
+    localStorage.setItem(BACKUP_KEYS.usedRecordNumbers, JSON.stringify(nextUsedRecordNumbers));
+
+    setSnapshotMessage(`Restored snapshot: ${snapshot.label}.`);
+
+    if (cloudSyncEnabled && isSupabaseConfigured) {
+      window.setTimeout(() => pushLocalDataToCloud(), 300);
+    }
+
+    if (typeof addToast === "function") {
+      addToast("success", "Snapshot restored", snapshot.label);
+    }
+  }
+
+  function deleteSnapshot(snapshotId) {
+    const confirmed = window.confirm("Delete this saved snapshot?");
+    if (!confirmed) return;
+
+    saveSnapshots(snapshots.filter((snapshot) => snapshot.id !== snapshotId));
+    setSnapshotMessage("Snapshot deleted.");
+  }
+
+
+
+  useEffect(() => {
+    if (!cloudSyncEnabled) return undefined;
+
+    const intervalId = window.setInterval(() => {
+      createCloudSnapshot("Auto snapshot");
+    }, 15 * 60 * 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, [
+    cloudSyncEnabled,
+    quotes,
+    jobs,
+    shippingEstimates,
+    customerOverrides,
+    manualCustomers,
+    inventoryItems,
+    inventoryLogs,
+    expenses,
+    suppliers,
+    usedRecordNumbers,
+  ]);
+
 
   const sidebarStats = useMemo(() => {
     const activeJobs = jobs.filter((job) => !job.archived);
@@ -2308,12 +3444,52 @@ export default function App() {
       />
     ),
 
-    settings: <SettingsPage />,
+    settings: (
+      <SettingsPage
+        cloudSyncEnabled={cloudSyncEnabled}
+        cloudSyncMessage={cloudSyncMessage}
+        cloudSyncLastAt={cloudSyncLastAt}
+        snapshotMessage={snapshotMessage}
+        snapshots={snapshots}
+        onCreateSnapshot={() => createCloudSnapshot("Manual snapshot")}
+        onRestoreSnapshot={restoreSnapshot}
+        onDeleteSnapshot={deleteSnapshot}
+        trashRecords={trashRecords}
+        trashMessage={trashMessage}
+        onRestoreTrashRecord={restoreTrashRecord}
+        onPermanentlyDeleteTrashRecord={permanentlyDeleteTrashRecord}
+        onEmptyTrash={emptyTrash}
+        recordHistory={recordHistory}
+        conflictWarnings={conflictWarnings}
+        onRestoreRecordHistoryEntry={restoreRecordHistoryEntry}
+        onClearRecordHistory={clearRecordHistory}
+        onDismissConflictWarning={dismissConflictWarning}
+        onClearConflictWarnings={clearConflictWarnings}
+      />
+    ),
   };
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
+      <button
+        className="mobile-menu-button"
+        type="button"
+        onClick={() => setMobileSidebarOpen(true)}
+      >
+        <Menu size={22} />
+        Menu
+      </button>
+
+      {mobileSidebarOpen && (
+        <button
+          className="mobile-sidebar-backdrop"
+          type="button"
+          aria-label="Close navigation menu"
+          onClick={() => setMobileSidebarOpen(false)}
+        />
+      )}
+
+      <aside className={`sidebar ${mobileSidebarOpen ? "mobile-open" : ""}`}>
         <div className="sidebar-brand">
           <img src={overkillMark} alt="Overkill icon" className="sidebar-mark" />
 
@@ -2323,6 +3499,15 @@ export default function App() {
             <div className="helper-note">{APP_VERSION}</div>
           </div>
         </div>
+
+        <button
+          className="mobile-sidebar-close secondary-button"
+          type="button"
+          onClick={() => setMobileSidebarOpen(false)}
+        >
+          <XCircle size={18} />
+          Close Menu
+        </button>
 
         <nav className="nav-list condensed-nav-list">
           {NAV_GROUPS.map((group) => (
@@ -2341,6 +3526,7 @@ export default function App() {
                       onClick={() => {
                         if (item.id !== "calculator") setEditingQuoteId(null);
                         setActivePage(item.id);
+                        setMobileSidebarOpen(false);
                       }}
                     >
                       <Icon size={18} />
@@ -2405,6 +3591,97 @@ export default function App() {
         </div>
 
         {backupMessage && <p className="helper-note">{backupMessage}</p>}
+
+        <div className="sidebar-mini-stats snapshot-sidebar-card">
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => createCloudSnapshot("Manual snapshot")}
+          >
+            Save Snapshot
+          </button>
+
+          <div>
+            <span>Snapshots</span>
+            <strong>{snapshots.length}</strong>
+          </div>
+        </div>
+
+        {snapshotMessage && <p className="helper-note">{snapshotMessage}</p>}
+
+        <div className="sidebar-mini-stats trash-sidebar-card">
+          <div>
+            <span>Trash</span>
+            <strong>{trashRecords.length}</strong>
+          </div>
+
+          {trashRecords.length > 0 && (
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => setActivePage("settings")}
+            >
+              Review Trash
+            </button>
+          )}
+        </div>
+
+        {trashMessage && <p className="helper-note">{trashMessage}</p>}
+
+        {conflictWarnings.length > 0 && (
+          <div className="sidebar-mini-stats conflict-sidebar-card">
+            <div>
+              <span>Conflicts</span>
+              <strong>{conflictWarnings.length}</strong>
+            </div>
+
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => setActivePage("settings")}
+            >
+              Review
+            </button>
+          </div>
+        )}
+
+
+
+        <div className="sidebar-mini-stats cloud-sync-mini-panel">
+          <div>
+            <span>Cloud Sync</span>
+            <strong>{isSupabaseConfigured ? "Ready" : "Not Set"}</strong>
+          </div>
+
+          <div>
+            <span>Mode</span>
+            <strong>{cloudSyncEnabled ? "Auto" : "Paused"}</strong>
+          </div>
+
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => setCloudSyncEnabled(!cloudSyncEnabled)}
+          >
+            <Database size={18} />
+            {cloudSyncEnabled ? "Pause Sync" : "Enable Sync"}
+          </button>
+
+          <button className="secondary-button" type="button" onClick={pushLocalDataToCloud}>
+            <Upload size={18} />
+            Push Cloud
+          </button>
+
+          <button className="secondary-button" type="button" onClick={pullCloudDataToLocal}>
+            <Download size={18} />
+            Pull Cloud
+          </button>
+        </div>
+
+        <p className="helper-note">
+          {cloudSyncMessage}
+          {cloudSyncLastAt ? ` • ${cloudSyncLastAt}` : ""}
+        </p>
       </aside>
 
       <main className="main-area">
@@ -2417,6 +3694,14 @@ export default function App() {
               <p className="muted-text">
                 Quotes, jobs, scheduling, automation, invoices, inventory, CRM, and profitability.
               </p>
+            </div>
+
+            <div className={`sync-status-pill ${!isOnline ? "offline" : cloudSyncState}`}>
+              <span className="sync-status-dot" />
+              <strong>
+                {getCloudSyncLabel(cloudSyncState, cloudSyncEnabled, isSupabaseConfigured, isOnline)}
+              </strong>
+              {cloudSyncLastAt && <em>{cloudSyncLastAt}</em>}
             </div>
 
             <div className="global-search-wrap">
@@ -2482,6 +3767,13 @@ export default function App() {
           </div>
         </header>
 
+        {!isOnline && (
+          <div className="offline-banner">
+            <strong>Offline Mode</strong>
+            <span>Changes are saved locally and will sync when this device reconnects.</span>
+          </div>
+        )}
+
         {pageContent[activePage]}
 
         {globalOpenTimers.length > 0 && (
@@ -2523,6 +3815,23 @@ export default function App() {
                 </div>
               ))}
             </div>
+          </div>
+        )}
+
+        {toasts.length > 0 && (
+          <div className="toast-stack" aria-live="polite">
+            {toasts.map((toast) => (
+              <div className={`app-toast ${toast.type}`} key={toast.id}>
+                <div>
+                  <strong>{toast.type === "error" ? "Heads up" : toast.type === "success" ? "Done" : "Update"}</strong>
+                  <span>{toast.message}</span>
+                </div>
+
+                <button type="button" onClick={() => removeToast(toast.id)}>
+                  <XCircle size={16} />
+                </button>
+              </div>
+            ))}
           </div>
         )}
       </main>
