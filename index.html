@@ -2,18 +2,71 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- ===================================================== -->
+    <!-- OVERKILL SOLUTIONS ERP — PWA / APP CONFIG             -->
+    <!-- ===================================================== -->
+
+    <link rel="icon" type="image/png" href="/icons/overkill-icon-192x192.png" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+
     <meta name="theme-color" content="#050505" />
+    <meta name="background-color" content="#050505" />
+
+    <!-- iOS standalone app support -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Overkill ERP" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+
+    <!-- Android / Chrome -->
+    <meta name="mobile-web-app-capable" content="yes" />
+
+    <!-- SEO / metadata -->
     <meta
       name="description"
-      content="Overkill Solutions internal production system for quotes, jobs, invoices, payments, shipping, and profitability tracking."
+      content="Overkill Solutions internal ERP for quotes, jobs, inventory, payments, scheduling, automation, production tracking, and reporting."
     />
-    <title>Overkill Solutions | Internal Production System</title>
+
+    <meta
+      name="keywords"
+      content="Overkill Solutions, ERP, Quotes, Inventory, Production, 3D Printing, CAD, Manufacturing"
+    />
+
+    <meta name="author" content="Overkill Solutions" />
+
+    <!-- Open Graph -->
+    <meta property="og:title" content="Overkill Solutions ERP" />
+    <meta
+      property="og:description"
+      content="Internal production management and quoting system."
+    />
+    <meta
+      property="og:image"
+      content="/icons/overkill-icon-512x512.png"
+    />
+
+    <!-- Prevent weird auto-darkening -->
+    <meta name="color-scheme" content="dark" />
+
+    <title>Overkill Solutions ERP</title>
   </head>
 
   <body>
+    <noscript>
+      Overkill Solutions ERP requires JavaScript enabled to run.
+    </noscript>
+
     <div id="root"></div>
+
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

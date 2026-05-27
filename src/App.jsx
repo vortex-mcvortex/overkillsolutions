@@ -141,7 +141,7 @@ const SEARCH_GROUPS = {
 
 const CLOUD_MISC_SETTINGS_ID = "misc";
 const CLOUD_SYNC_DEBOUNCE_MS = 700;
-const CLOUD_POLL_INTERVAL_MS = 5000;
+const CLOUD_POLL_INTERVAL_MS = 30000;
 const CLOUD_RECENT_LOCAL_PUSH_GRACE_MS = 2500;
 
 const LOCAL_TO_CLOUD_TABLES = {
@@ -1083,7 +1083,6 @@ export default function App() {
       setCustomerOverrides(nextCustomerOverrides);
       setSuppliers(nextSuppliers);
       setUsedRecordNumbers(nextUsedRecordNumbers);
-    setTrashRecords(nextTrashRecords);
 
       localStorage.setItem(BACKUP_KEYS.shippingEstimates, JSON.stringify(nextShippingEstimates));
       localStorage.setItem(BACKUP_KEYS.customerOverrides, JSON.stringify(nextCustomerOverrides));
@@ -1376,23 +1375,25 @@ export default function App() {
   }, [cloudSyncEnabled]);
 
   useEffect(() => {
-    if (!cloudSyncEnabled || !isSupabaseConfigured) return;
-    if (applyingRemoteUpdateRef.current) return;
+  if (!cloudSyncEnabled || !isSupabaseConfigured) return;
+  if (applyingRemoteUpdateRef.current) return;
 
+  const timeout = window.setTimeout(() => {
     forceCloudSync("Reactive sync");
-  }, [
-    quotes,
-    jobs,
-    inventoryItems,
-    inventoryLogs,
-    manualCustomers,
-    expenses,
-    shippingEstimates,
-    customerOverrides,
-    suppliers,
-    usedRecordNumbers,
-    cloudSyncEnabled,
-  ]);
+  }, 2500);
+
+  return () => window.clearTimeout(timeout);
+}, [
+  quotes.length,
+  jobs.length,
+  inventoryItems.length,
+  inventoryLogs.length,
+  manualCustomers.length,
+  expenses.length,
+  shippingEstimates.length,
+  suppliers.length,
+  cloudSyncEnabled,
+]);
 
   useEffect(() => {
     if (!isSupabaseConfigured || !supabase || !cloudSyncEnabled) return undefined;
